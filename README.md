@@ -1,8 +1,9 @@
-# PatchProof — Phase 2
+# PatchProof — Phase 3
 
-PatchProof is an open-source website security agent under development. Phase 2 is
+PatchProof is an open-source website security agent under development. Phase 3 is
 an installable, local Python CLI: scan one exact URL, export a portable CheckSpec,
-and replay it after a fix. No API key is needed. Test only websites you own or have
+and replay it after a fix. Scan and replay need no API key. Optional investigation
+uses OpenRouter only when explicitly requested and configured. Test only websites you own or have
 permission to test.
 
 ## macOS setup
@@ -44,6 +45,128 @@ echo "Replay exit: $?"  # 2: unverified, blocked destination
 
 Stop the server with Ctrl-C. Delete `.demo-csp` before repeating the missing-header
 demo. A public target uses the same commands without `--allow-local`.
+
+## Optional investigation (Phase 3)
+
+First install the project using the macOS setup above. No new dependencies are
+required. For an entirely offline demo with a **fake OpenRouter client** and a real
+loopback HTTP fixture:
+
+```sh
+source .venv/bin/activate
+python examples/phase3_demo.py
+```
+
+The demo prints the baseline missing-CSP finding, a model-requested evidence read,
+a model-requested replay after a simulated fix, and a validated final explanation.
+It makes exactly two target GETs and no provider requests. The normal pytest suite
+also uses fake providers or mocked provider transports; no API key is needed.
+
+To opt into real OpenRouter calls, configure the environment. `.env.example`
+contains blank placeholders; `.env` and `.env.*` (except the example) are ignored
+by Git. PatchProof does **not** auto-load dotenv files. Set variables in your shell,
+or copy the example to `.env`, edit it locally, and export it:
+
+```sh
+cp .env.example .env  # only if .env does not already exist
+# Edit .env locally: set your key and a tool-capable OpenRouter model ID.
+set -a
+source .env
+set +a
+patchproof investigate https://your-domain.example/ --session-cookie sid --format json
+```
+
+Only use an authorized target. With `examples/local_server.py` running in another
+terminal, the equivalent loopback command is:
+
+```sh
+patchproof investigate http://127.0.0.1:8765 --allow-local --format text
+```
+
+With credentials configured this makes **real provider calls**, even though the
+target is local. Without both settings it returns the baseline with
+`ai_status: not_configured`. Invalid target input exits before OpenRouter is called;
+a destination blocked by the baseline address policy returns `target_blocked`.
+Unreachable targets remain unverified; they are never inferred to be fixed.
+
+### Scope, budgets, and results
+
+Investigation always runs the deterministic scan first. The model can request only:
+
+- `get_evidence(evidence_id)`: retrieve an allowlisted record from this run.
+- `rerun_check(check_id)`: replay a registered check using the operator's original
+  URL, cookie configuration, and loopback permission through `service.execute`,
+  the same execution path used by file-based replay.
+
+IDs are randomly generated and scoped to the current run. The model cannot supply
+URLs, methods, headers, cookie names, or permissions. Python validates the entire
+tool-call batch before executing any of it. Unknown names, extra arguments, unknown
+IDs, duplicate call IDs, and malformed arguments stop AI processing with
+`invalid_tool`; untrusted arguments are never echoed or executed. Every target
+attempt still enforces the connection-time address policy, TLS checks, redirect
+restrictions, and proxy restrictions.
+
+Limits are **three model requests**, **two follow-up target attempts** in addition
+to the baseline, and eight tool calls per model turn. Failed requests count too.
+Calls are executed sequentially. Hitting a limit returns `budget_exhausted` and
+retains all collected results. Provider requests use a fixed HTTPS endpoint,
+20-second HTTPX operation timeouts, no redirects/proxies/retries, a 2,048-token
+output cap, and a 256 KiB response cap. These are per-operation timeouts, not a
+single end-to-end investigation deadline.
+
+JSON includes `baseline`, `ai_status`, `ai_reason`, `model_turns`,
+`followup_requests`, `tool_events`, `followups`, the sanitized `evidence` ID map,
+optional `explanation`, and fixed `limitations`. Text includes the same outcomes
+and requested tools. Baseline findings remain separate from follow-up results.
+AI status is `completed`, `not_configured`, `target_blocked`, `provider_error`,
+`invalid_tool`, `invalid_response`, or `budget_exhausted`.
+
+The final model response must be JSON with `claims` and `limitations`. Each claim
+has nonempty `evidence_ids`, an `outcome` that must match every referenced record,
+and a bounded `explanation`. Unknown references or conflicting outcomes reject the
+whole explanation. Limitations are selected from a fixed vocabulary:
+`presence_only`, `single_response`, `unverified_checks`,
+`no_exploitation_assessment`, and `model_uncertainty`. Free-form model explanations
+are advisory, not additional verified findings; references cannot prove that every
+sentence is correct. Invalid responses and provider failures fall back to the
+retained deterministic report. A disappearing cookie is unverified on replay,
+not resolved.
+
+| Investigation exit | Meaning |
+| --- | --- |
+| 0 | Baseline and any follow-ups have no unverified outcomes; findings may exist |
+| 2 | Invalid input, unverified baseline, or any unverified follow-up |
+
+AI availability is best-effort: missing configuration, provider failures, invalid
+AI output, and budget exhaustion do not by themselves change the deterministic
+exit code. Automation must inspect `ai_status` if it requires AI completion.
+Existing scan/replay exit codes and schema 1/2 CheckSpecs are unchanged.
+
+### Exactly what leaves the machine
+
+The target receives the same bounded GET as scan, plus up to two authorized
+follow-up GETs; target DNS resolution also occurs. OpenRouter and its selected
+model provider receive the static instructions, tool/response schemas, selected
+model ID, opaque check/evidence IDs, rule IDs and detector versions, deterministic
+statuses/applicability, observed-condition booleans, HTTP status codes, HTTPS/HTML
+flags, CSP/HSTS presence flags, and (for a configured-cookie check) counts of issued,
+insecure, and unparseable instances. Follow-up turns include only validated tool
+calls and the same allowlisted records. Target data is explicitly marked untrusted.
+
+**Target URLs/hosts/paths, cookie names and values, raw headers, bodies, tokens,
+CheckSpecs, permissions, and raw exception messages are not sent to the model.**
+The API key is sent only as the Authorization header to the fixed OpenRouter API
+endpoint; it is never placed in messages or output. Local deterministic reports
+retain URLs and configured cookie names as before. Investigation creates no history
+files and does not export model prose as regression checks. Normal scan/replay
+never read OpenRouter configuration or make model calls.
+
+The adapter follows OpenRouter's official
+[Chat Completions tool-calling documentation](https://openrouter.ai/docs/guides/features/tool-calling):
+function definitions in `tools`, assistant `tool_calls` with JSON-string arguments,
+and matching `role: tool` replies. Tool schemas are sent on every turn. Choose a
+model that supports tools; models needing provider-specific reasoning replay or
+strict structured-output options may fall back to deterministic results.
 
 ## Phase 2 checks and export
 
@@ -123,8 +246,8 @@ Content-Security-Policy-Report-Only does not satisfy this rule.
 
 ## Scope, network policy, and privacy
 
-Each run sends at most one GET to the supplied target, plus system DNS resolution
-for its hostname. There are no model calls, telemetry, cookies, credentials,
+Each scan or replay sends at most one GET to the supplied target, plus system DNS
+resolution for its hostname. These commands have no model calls, telemetry, cookies, credentials,
 retries, redirect following, crawling, or environment proxy use. HTTP and HTTPS
 only; credentials, query strings, fragments, malformed URLs, and nonpublic IPs
 are rejected. `--allow-local` adds only loopback addresses, independently on every
@@ -188,8 +311,8 @@ selection is unverified; no fallback address or retry is attempted. Cookie parsi
 is conservative and is not a browser cookie jar. It does not infer session cookie
 names, authenticate, assess HttpOnly/SameSite, or evaluate cookie scope and lifetime.
 
-OpenRouter investigation, Playwright, FastAPI, dashboard, history, more detectors,
-and hosted domain verification are deferred. Future website content must remain
+Playwright, FastAPI, dashboard, history, more detectors, and hosted domain
+verification are deferred. Website content must remain
 untrusted data. A model may request a registered tool; application policy must
 authorize each action and enforce scope and budgets before execution. A model or
 imported spec cannot grant network access or execute arbitrary commands.

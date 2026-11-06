@@ -10,3 +10,7 @@ dist/
 .DS_Store
 .demo-csp
 csp-check.json
+
+.env
+.env.*
+!.env.example

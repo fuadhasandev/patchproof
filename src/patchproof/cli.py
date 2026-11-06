@@ -56,5 +56,18 @@ def replay(path: Path, format: Format = typer.Option(Format.text), allow_local: 
     raise typer.Exit({'resolved': 0, 'still_present': 1, 'unverified': 2}[result.status])
 
 
+@app.command()
+def investigate(url: str, format: Format = typer.Option(Format.text),
+                session_cookie: list[str] | None = typer.Option(None), allow_local: bool = False):
+    """Scan first, then optionally investigate through bounded OpenRouter tools."""
+    from .investigation import investigate as run, render_investigation, exit_code
+    try:
+        result = run(url, allow_local=allow_local, session_cookies=session_cookie or ())
+    except ValueError:
+        error('Invalid target or cookie name; OpenRouter was not called.', format)
+    typer.echo(render_investigation(result, format.value))
+    raise typer.Exit(exit_code(result))
+
+
 if __name__ == '__main__':
     app()
