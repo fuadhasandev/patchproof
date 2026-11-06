@@ -1,6 +1,6 @@
-# PatchProof — Phase 1
+# PatchProof — Phase 2
 
-PatchProof is an open-source website security agent under development. Phase 1 is
+PatchProof is an open-source website security agent under development. Phase 2 is
 an installable, local Python CLI: scan one exact URL, export a portable CheckSpec,
 and replay it after a fix. No API key is needed. Test only websites you own or have
 permission to test.
@@ -45,19 +45,75 @@ echo "Replay exit: $?"  # 2: unverified, blocked destination
 Stop the server with Ctrl-C. Delete `.demo-csp` before repeating the missing-header
 demo. A public target uses the same commands without `--allow-local`.
 
+## Phase 2 checks and export
+
+| Stable rule ID (detector version 1) | Applicability | What is checked |
+| --- | --- | --- |
+| `http.csp.present` | Successful HTML response | Nonempty Content-Security-Policy; unchanged Phase 1 behavior |
+| `http.hsts.present` | Successful HTTPS response, including non-HTML | Nonempty Strict-Transport-Security |
+| `http.session-cookie.secure` | Successful HTTPS response issuing an explicitly configured name | Every observed instance of that name has Secure |
+
+CSP and HSTS check **presence only**, not policy strength. HSTS `max-age=0`
+therefore passes this narrow rule. Cookie names are case-sensitive ASCII tokens
+(1–256 characters). Repeat `--session-cookie` to configure multiple names; duplicate
+names are deduplicated. Separate Set-Cookie fields stay separate, including fields
+with a comma in Expires. No cookie values are retained. Any definite instance
+without Secure fails the rule. A matching malformed field makes the check
+unverified unless another instance already proves the condition fails.
+
+For an HTTPS website you own or have permission to test, replace the target below:
+
+```sh
+patchproof scan https://your-domain.example/ --session-cookie sid --session-cookie session --format json
+patchproof scan https://your-domain.example/ --session-cookie sid --export-checks checks
+patchproof replay checks/001-http.csp.present.json --format json
+# Replay every exported finding (each replay makes its own single GET):
+for check in checks/*.json; do patchproof replay "$check" --format json; done
+```
+
+Export file names are numbered in finding order: CSP, HSTS, then configured cookie
+names. Only findings are exported, so inspect the directory before choosing a
+single file. Names never become filesystem paths. `--export-check FILE` still
+works when there is exactly one finding; with multiple findings it directs you
+to `--export-checks DIR`. The directory must be new. Both modes refuse to overwrite
+existing destinations. An I/O failure during directory export can leave partial
+files; choose a new directory when retrying. The export options are mutually exclusive.
+
+Run the complete HTTPS scenario locally, without DNS or external requests:
+
+```sh
+python examples/phase2_demo.py
+```
+
+This controlled demo mocks HTTPcore response metadata, runs the actual CLI through
+Typer, exports three checks, and demonstrates cookie replay still present → resolved
+→ unverified after the cookie disappears. It does not change production TLS or
+network policy. The original loopback HTTP demo above exercises real sockets;
+HSTS and configured-cookie checks are skipped there because it uses HTTP.
+
 ## Results and CI
 
 | Replay exit | Meaning |
 | --- | --- |
-| 0 | Resolved: successful HTML response has a nonempty CSP header |
-| 1 | Still present: successful HTML response lacks a nonempty CSP header |
-| 2 | Unverified or invalid input/spec: blocked, timeout, network failure, redirect, unsuccessful response, non-HTML, or unsupported spec |
+| 0 | Resolved: the original detector applies and its expected condition is met |
+| 1 | Still present: the original detector applies and its expected condition fails |
+| 2 | Unverified or invalid input/spec: the original check cannot be evaluated or does not apply |
 
-Scan exits 0 for an evaluated rule (with or without a finding), and 2 for
-unverified/invalid input or export failure. `--export-check` writes only when a
-finding exists; otherwise it errors and leaves the destination unchanged. Exports
-replace the specified file. JSON output is available with `--format json`; runtime
-errors use an `error` object. CLI syntax errors use Typer's normal stderr output.
+Scan exits 0 when checks are evaluated or intentionally skipped, whether findings
+exist or not, and 2 when any check is unverified or input/export fails. CSP on a
+non-HTML response remains unverified, as in Phase 1. HTTP skips HTTPS-only checks;
+no configured names or no matching issued cookie skips the cookie check. Skips
+carry reasons and are never treated as evidence of a fix. During replay, every
+skip becomes **unverified**, including a cookie that is no longer issued.
+Timeouts, redirects, unsuccessful responses, blocked destinations, and malformed
+matching cookie evidence are also unverified. Redirects are never followed.
+
+Text and JSON expose rule IDs, applicability, sanitized evidence, coverage, and
+remediation. JSON scan output contains `checks` and `findings`; the legacy `run`
+and `finding` accessors still refer to CSP. The top-level scan status gives priority
+to unverified checks, then findings, then resolved. Replay remains a single `run`
+and optional `finding`. Runtime errors use an `error` object; CLI syntax errors
+use Typer's normal stderr output.
 
 Missing CSP is a **configuration observation**, not proof of exploitation. A
 present header passes this rule only; the policy's strength is not assessed.
@@ -85,12 +141,15 @@ The response body stream is never consumed. A network read for headers may also
 receive some body bytes in the same packet; those bytes are discarded on close.
 Redirect locations are neither followed nor retained.
 
-Only allowlisted evidence is retained: status code, HTML classification, and CSP
-presence. Cookie values, raw headers, response bodies, and network exception text
+Only allowlisted evidence is retained: status code, HTTPS/HTML classification,
+CSP/HSTS presence, configured cookie names, and counts of matching, insecure, and
+unparseable cookie fields. Cookie values, raw headers, response bodies, and network exception text
 are excluded from reports and logs. HTTPX/HTTPcore diagnostic loggers are disabled
 to prevent raw-header logging. This also affects those loggers in an embedding
 Python process. CheckSpecs save schema version, rule ID, detector version, exact
-normalized target URL, GET method, and the registered expected condition. They
+normalized target URL, GET method, and the registered expected condition. New HSTS/cookie specs use schema 2 with validated rule parameters;
+cookie specs include the exact configured cookie name. CSP continues exporting
+the original six-field schema 1, and existing Phase 1 files remain replayable. Specs
 save no results or authorization. JSON finding reports include this spec and its
 failed CheckRun; resolved/unverified reports contain the CheckRun. Paths in target
 URLs are retained, so do not supply URLs with secrets in their paths.
@@ -98,18 +157,18 @@ URLs are retained, so do not supply URLs with secrets in their paths.
 ## Python API and architecture
 
 ```python
-from patchproof import scan, export_check, replay
+from patchproof import scan, export_checks, replay
 
-result = scan('http://127.0.0.1:8765', allow_local=True)
-if result.finding:
-    export_check(result.finding, 'csp-check.json')
-result = replay('csp-check.json', allow_local=True)
+result = scan('http://127.0.0.1:8765', allow_local=True, session_cookies=['sid'])
+if result.findings:
+    export_checks(result.findings, 'new-checks')
+result = replay('new-checks/001-http.csp.present.json', allow_local=True)
 print(result.status)
 ```
 
 `policy.py` validates scope and addresses; `collector.py` enforces that policy at
 connection time and produces typed evidence; `detectors.py` evaluates that evidence
-without I/O; `service.py` orchestrates scan/export/replay; `reporting.py` and
+without I/O through a registry keyed by (rule ID, detector version); `service.py` orchestrates scan/export/replay; `reporting.py` and
 `cli.py` present results. Pydantic models reject extra fields and conflicting
 versions, methods, rules, and expected conditions. Specs are limited to 64 KiB on
 load. Imported expressions, headers, commands, or executable code are never used.
@@ -122,9 +181,12 @@ Dependency installation does need package-index access.
 
 ## Later phases and limitations
 
-This phase checks one response and one header; it does not inspect body markup,
+This phase checks one response, two header-presence conditions, and explicitly
+named cookie Secure attributes; it does not inspect body markup,
 policy strength, browser behavior, or other vulnerabilities. Failed DNS/address
-selection is unverified; no fallback address or retry is attempted.
+selection is unverified; no fallback address or retry is attempted. Cookie parsing
+is conservative and is not a browser cookie jar. It does not infer session cookie
+names, authenticate, assess HttpOnly/SameSite, or evaluate cookie scope and lifetime.
 
 OpenRouter investigation, Playwright, FastAPI, dashboard, history, more detectors,
 and hosted domain verification are deferred. Future website content must remain

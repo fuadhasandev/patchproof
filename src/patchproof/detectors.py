@@ -1,13 +1,19 @@
-"""Pure typed detectors. No network I/O or imported expressions."""
-from .models import CheckSpec, CheckRun, Evidence
+"""Versioned pure detectors. No network I/O or imported expressions."""
+from .models import Spec, CheckRun, Evidence
 
 
 class CSPRule:
     rule_id = 'http.csp.present'
     detector_version = '1'
     expected_condition = 'nonempty-content-security-policy'
+    title = 'Missing Content-Security-Policy header'
+    coverage = 'CSP header presence only; policy strength is not assessed.'
+    remediation = 'Configure a nonempty Content-Security-Policy response header appropriate for this website.'
 
-    def evaluate(self, evidence: Evidence, reason: str | None = None) -> CheckRun:
+    def evaluate(self, evidence: Evidence, reason=None, parameters=None) -> CheckRun:
+        applicability = 'evaluated'
+        observed = None
+        name = (parameters or {}).get('cookie_name')
         if reason is None:
             if evidence.status_code is None:
                 reason = 'No response metadata available.'
@@ -15,20 +21,77 @@ class CSPRule:
                 reason = 'Redirect response; redirects are not followed.'
             elif not 200 <= evidence.status_code < 300:
                 reason = 'Unsuccessful response.'
-            elif not evidence.is_html:
-                reason = 'Response is not HTML.'
-        return CheckRun(applied=reason is None,
-                        observed_condition=evidence.csp_present if reason is None else None,
-                        evidence=evidence, reason=reason)
+        if reason:
+            applicability = 'unverified'
+        else:
+            observed, reason, applicability = self.condition(evidence, name)
+        return CheckRun(rule_id=self.rule_id, detector_version=self.detector_version,
+                        applied=applicability == 'evaluated', applicability=applicability,
+                        observed_condition=observed, evidence=evidence, reason=reason,
+                        cookie_name=name, coverage=self.coverage, remediation=self.remediation)
+
+    def condition(self, evidence, name):
+        if not evidence.is_html:
+            return None, 'Response is not HTML.', 'unverified'
+        if evidence.csp_present is None:
+            return None, 'CSP evidence is unavailable.', 'unverified'
+        return evidence.csp_present, None, 'evaluated'
 
 
-RULES = {CSPRule.rule_id: CSPRule()}
+class HSTSRule(CSPRule):
+    rule_id = 'http.hsts.present'
+    expected_condition = 'nonempty-strict-transport-security'
+    title = 'Missing Strict-Transport-Security header'
+    coverage = 'HSTS header presence on successful HTTPS responses only; policy strength is not assessed.'
+    remediation = 'Configure a nonempty Strict-Transport-Security header appropriate for this HTTPS website.'
+
+    def condition(self, evidence, name):
+        if evidence.is_https is False:
+            return None, 'Requires HTTPS; skipped on HTTP.', 'skipped'
+        if evidence.is_https is None or evidence.hsts_present is None:
+            return None, 'HSTS evidence is unavailable.', 'unverified'
+        return evidence.hsts_present, None, 'evaluated'
 
 
-def resolve_rule(spec: CheckSpec):
-    rule = RULES.get(spec.rule_id)
-    if (rule is None or spec.schema_version != '1' or spec.method != 'GET'
-            or spec.detector_version != rule.detector_version
-            or spec.expected_condition != rule.expected_condition):
+class SessionCookieRule(CSPRule):
+    rule_id = 'http.session-cookie.secure'
+    expected_condition = 'all-observed-instances-secure'
+    title = 'Session cookie issued without Secure'
+    coverage = 'Secure attribute on explicitly named cookies issued by a successful HTTPS response only.'
+    remediation = 'Set Secure on every issued instance of the configured session cookie.'
+
+    def evaluate(self, evidence: Evidence, reason=None, parameters=None) -> CheckRun:
+        if not (parameters or {}).get('cookie_name'):
+            return CheckRun(rule_id=self.rule_id, applied=False, applicability='skipped',
+                            observed_condition=None, evidence=evidence,
+                            reason='No session cookie names configured.',
+                            coverage=self.coverage, remediation=self.remediation)
+        return super().evaluate(evidence, reason, parameters)
+
+    def condition(self, evidence, name):
+        if evidence.is_https is False:
+            return None, 'Requires HTTPS; skipped on HTTP.', 'skipped'
+        if evidence.is_https is None:
+            return None, 'HTTPS evidence is unavailable.', 'unverified'
+        cookie = next((item for item in evidence.cookies if item.name == name), None)
+        if cookie is None:
+            return None, 'Configured cookie evidence is unavailable.', 'unverified'
+        if cookie.instances == 0:
+            return None, 'Response did not issue the configured cookie.', 'skipped'
+        # A definite insecure instance is enough to fail, even if another is malformed.
+        if cookie.missing_secure:
+            return False, None, 'evaluated'
+        if cookie.unparseable:
+            return None, 'A matching Set-Cookie field could not be evaluated.', 'unverified'
+        return True, None, 'evaluated'
+
+
+RULES = {(rule.rule_id, rule.detector_version): rule for rule in
+         (CSPRule(), HSTSRule(), SessionCookieRule())}
+
+
+def resolve_rule(spec: Spec):
+    rule = RULES.get((spec.rule_id, spec.detector_version))
+    if rule is None or spec.method != 'GET' or spec.expected_condition != rule.expected_condition:
         raise ValueError('Invalid or unsupported CheckSpec.')
     return rule

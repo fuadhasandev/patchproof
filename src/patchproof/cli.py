@@ -20,16 +20,27 @@ def error(message, format):
 
 @app.command()
 def scan(url: str, format: Format = typer.Option(Format.text),
-         export_check: Path | None = typer.Option(None), allow_local: bool = False):
-    """Make one GET and optionally export a finding's CheckSpec."""
+         export_check: Path | None = typer.Option(None),
+         export_checks: Path | None = typer.Option(None),
+         session_cookie: list[str] | None = typer.Option(None), allow_local: bool = False):
+    """Make one GET for all checks and optionally export finding specs."""
+    if export_check is not None and export_checks is not None:
+        error('Choose --export-check or --export-checks, not both.', format)
     try:
-        result = service.scan(url, allow_local=allow_local)
-        if export_check is not None:
-            if result.finding is None:
-                error('No finding to export; no CheckSpec was written.', format)
-            service.export_check(result.finding, export_check)
+        result = service.scan(url, allow_local=allow_local, session_cookies=session_cookie or ())
+        if export_check is not None or export_checks is not None:
+            if not result.findings:
+                error('No findings to export; no CheckSpec was written.', format)
+            if export_check is not None:
+                if len(result.findings) != 1:
+                    error('Multiple findings: use --export-checks DIR.', format)
+                service.export_check(result.findings[0], export_check)
+            else:
+                service.export_checks(result.findings, export_checks)
+    except FileExistsError:
+        error('Export destination already exists; choose a new file or directory.', format)
     except (ValueError, OSError):
-        error('Invalid target or unable to write CheckSpec.', format)
+        error('Invalid target/cookie name or unable to write CheckSpec.', format)
     typer.echo(render(result, format.value))
     raise typer.Exit(2 if result.status == 'unverified' else 0)
 

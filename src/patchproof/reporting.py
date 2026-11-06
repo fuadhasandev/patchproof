@@ -1,15 +1,22 @@
-from .models import Result
+from .models import Result, ScanResult
 
 
 def render(result: Result, format: str) -> str:
     if format == 'json':
         return result.model_dump_json(indent=2)
-    label = {'resolved': 'Resolved: CSP header is nonempty.',
-             'still_present': 'Still present: missing CSP header (configuration observation).',
-             'unverified': 'Unverified: ' + (result.run.reason or '')}[result.status]
-    evidence = result.run.evidence
-    lines = [label, f'Status: {evidence.status_code}; HTML: {evidence.is_html}; CSP present: {evidence.csp_present}']
-    if result.finding:
-        lines.append('Suggested fix: ' + result.finding.suggested_fix)
-    lines.append('This rule checks header presence only; it does not assess policy strength.')
+    checks = result.checks if isinstance(result, ScanResult) else (result,)
+    lines = ['Overall: ' + result.status.replace('_', ' ')]
+    for check in checks:
+        run = check.run
+        lines.append(f'{run.rule_id}@{run.detector_version}: {check.status.replace("_", " ")} '
+                     f'(applicability: {run.applicability})')
+        if run.cookie_name is not None:
+            lines.append('Cookie name: ' + run.cookie_name)
+        if check.finding:
+            lines.append(check.finding.title + ' (configuration observation)')
+        if run.reason:
+            lines.append('Reason: ' + run.reason)
+        lines.append('Evidence: ' + run.evidence.model_dump_json())
+        lines.append('Coverage: ' + run.coverage)
+        lines.append('Remediation: ' + run.remediation)
     return '\n'.join(lines)

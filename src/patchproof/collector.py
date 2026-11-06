@@ -8,6 +8,7 @@ import httpcore
 import httpx
 from httpcore._backends.sync import SyncStream
 from .models import Evidence
+from .cookies import observe_cookies, validate_cookie_name
 from .policy import PolicyError, resolve, validate_url
 
 # httpcore debug events contain raw response headers. Never emit them.
@@ -82,7 +83,8 @@ class PolicyBackend(httpcore.NetworkBackend):
 
 
 class MetadataTransport(httpx.BaseTransport):
-    def __init__(self, allow_local, timeout):
+    def __init__(self, allow_local, timeout, session_cookies=()):
+        self.session_cookies = session_cookies
         self.pool = httpcore.ConnectionPool(
             network_backend=PolicyBackend(allow_local, time.monotonic() + timeout),
             retries=0, max_connections=1, max_keepalive_connections=0)
@@ -99,7 +101,10 @@ class MetadataTransport(httpx.BaseTransport):
                 'text/html', 'application/xhtml+xml'}
             csp = any(value.strip() for value in headers.get_list('content-security-policy'))
             return httpx.Response(response.status, extensions={
-                'evidence': Evidence(status_code=response.status, is_html=html, csp_present=csp)})
+                'evidence': Evidence(status_code=response.status, is_html=html, csp_present=csp,
+                    is_https=request.url.scheme == 'https',
+                    hsts_present=any(v.strip() for v in headers.get_list('strict-transport-security')),
+                    cookies=observe_cookies(headers.get_list('set-cookie'), self.session_cookies))})
         finally:
             response.close()
 
@@ -107,10 +112,11 @@ class MetadataTransport(httpx.BaseTransport):
         self.pool.close()
 
 
-def collect(target_url: str, *, allow_local=False, timeout=5.0):
+def collect(target_url: str, *, allow_local=False, timeout=5.0, session_cookies=()):
     target_url = validate_url(target_url)
+    session_cookies = tuple(dict.fromkeys(validate_cookie_name(n) for n in session_cookies))
     try:
-        with httpx.Client(transport=MetadataTransport(allow_local, timeout),
+        with httpx.Client(transport=MetadataTransport(allow_local, timeout, session_cookies),
                           trust_env=False, follow_redirects=False, timeout=timeout) as client:
             with client.stream('GET', target_url, headers={'User-Agent': 'PatchProof/0.1'}) as response:
                 return response.extensions['evidence'], None
