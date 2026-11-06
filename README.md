@@ -1,7 +1,7 @@
-# PatchProof — Phase 3
+# PatchProof — Phase 4
 
-PatchProof is an open-source website security agent under development. Phase 3 is
-an installable, local Python CLI: scan one exact URL, export a portable CheckSpec,
+PatchProof is an open-source website security agent under development. Phase 4 adds a local FastAPI backend and Next.js dashboard
+to the Python CLI: scan one exact URL, export a portable CheckSpec,
 and replay it after a fix. Scan and replay need no API key. Optional investigation
 uses OpenRouter only when explicitly requested and configured. Test only websites you own or have
 permission to test.
@@ -13,9 +13,176 @@ Use Python 3.11 or newer. From this workspace:
 ```sh
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[dev]'
+python -m pip install -e '.[dev,api]'
 python -m pytest -q
 ```
+
+## Local dashboard (Phase 4)
+
+Use Python 3.11+ and Node.js 20.9+ (tested with Python 3.13 and Node 20.19).
+From the repository root, install both applications and generate a local server
+credential. The setup script creates `.env.api` with mode 0600 and never prints
+its value or overwrites an existing file. Git ignores this file.
+
+```sh
+cd "/Users/macbookpro/Desktop/AI Projects/Patchproof"
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev,api]'
+python scripts/configure_local.py
+cd dashboard
+npm ci
+cd ..
+```
+
+**Terminal 1 — backend** (from the repository root):
+
+```sh
+source .venv/bin/activate
+set -a
+source .env.api
+set +a
+# Optional, only for the local fixture demo; omit for normal operation:
+export PATCHPROOF_FIXTURE_ORIGIN=http://127.0.0.1:8765
+python -m uvicorn patchproof.api:create_app --factory \
+  --host 127.0.0.1 --port 8000 --no-access-log
+```
+
+**Terminal 2 — dashboard** (from the repository root):
+
+```sh
+set -a
+source .env.api
+set +a
+export NEXT_TELEMETRY_DISABLED=1
+cd dashboard
+npm run dev
+```
+
+Open **http://localhost:3000**. The API is **http://127.0.0.1:8000** and is
+not a browser login page: every API route requires the server credential.
+Both dev servers bind to loopback explicitly. Use exactly `localhost:3000` for
+the dashboard; browser-facing API routes reject other Host values. Run one API
+process (no `--workers` or reload process) because job history is process-local.
+For a local production build, use `npm run build` then `npm start` in the dashboard
+directory with the same server-only credential exported.
+
+### Fixture walkthrough
+
+With the optional fixture origin enabled on the backend, start a third terminal
+in the repository root:
+
+```sh
+source .venv/bin/activate
+python examples/local_server.py
+```
+
+Start without `.demo-csp` present. Scan `http://127.0.0.1:8765` in the dashboard,
+leaving AI off. Inspect the missing-CSP finding and click **Download CheckSpec**.
+The original schema-1 JSON remains replayable with the CLI. Then, from another
+terminal in the repository root:
+
+```sh
+touch .demo-csp
+```
+
+Click **Recheck**: the same finding shows its original `still present` result beside
+the latest `resolved` result. Stop the fixture with Ctrl-C and recheck again: the
+latest result becomes `unverified`, with a network-failure reason. Delete `.demo-csp`
+before repeating this manual demo. HSTS and cookie checks are skipped on HTTP.
+
+API loopback access is disabled unless `PATCHPROOF_FIXTURE_ORIGIN` is explicitly
+set **on the backend**. The exception must be a literal loopback IP origin (scheme,
+IP and port), not a hostname, private LAN address, path, or wildcard. It allows only
+that exact origin; different paths on that origin are still within fixture scope.
+Neither a browser request nor a stored CheckSpec can grant local-network access.
+All rechecks recompute permission from backend configuration and reuse the core's
+connection-time DNS/IP enforcement, TLS verification, redirects-off behavior,
+proxy restrictions, and timeouts. Unset the variable and restart the backend to
+disable the fixture exception.
+
+### Local API contract and limits
+
+The dashboard uses five explicit same-origin proxy routes. The backend URL is fixed,
+not supplied by a request. The Next.js server adds the shared credential; it is not
+included in client JavaScript, browser storage, or API reports. Browser-facing
+state-changing routes require `Origin: http://localhost:3000` and
+`Host: localhost:3000`; the backend separately checks its expected Host, Origin,
+and credential. There is no wildcard CORS or general-purpose URL proxy.
+
+| Backend route | Operation |
+| --- | --- |
+| `GET /v1/capabilities` | Investigation availability, fixture configuration, local limits |
+| `POST /v1/scans` | JSON `{ "target_url": "https://example.com", "session_cookies": [], "ai": false }`; returns 202 with job ID immediately |
+| `GET /v1/jobs/{id}` | Poll `queued`, `running`, `completed`, or `failed`; completed jobs include reports and findings |
+| `GET /v1/findings/{id}/spec` | Download the stored finding's versioned CheckSpec |
+| `POST /v1/findings/{id}/rechecks` | JSON `{}`; returns a new job linked by `original_finding_id` |
+
+Jobs use **two worker threads**, at most **eight queued/running jobs combined**, and
+at most **64 retained jobs**. Full capacity returns 429 without queuing more work.
+Completed/failed jobs and their findings expire **30 minutes after completion**;
+cleanup runs every 30 seconds and on access. Running jobs retain their slots until
+they finish. API restart clears all history, finding IDs, and recheck links; there
+is no recovery or persistence. A page refresh resets the dashboard's current view.
+Expired/unknown IDs return 404. A recheck job can outlive its original finding's
+retention window, but cannot authorize a different target.
+
+Input bodies are limited to **8 KiB**, URLs to 2,048 characters, and cookie-name
+lists to 16 entries. Unexpected fields (including `allow_local`, API keys, arbitrary
+headers, methods, or replacement specs) are rejected. Validation and job errors
+are generic so submitted secrets and exception text are not echoed. Each normal
+scan/recheck still makes at most one bounded target GET; AI adds at most the Phase 3
+two follow-up attempts. Slow provider calls can occupy a worker; these are in-process
+threads, not a cancellable process sandbox. Local credentials do not defend against
+other trusted programs running as your own OS user. Do not expose either server on
+public interfaces, tunnel it publicly, or use it as a hosted scanning service.
+
+### AI in the dashboard
+
+AI investigation is available but **off by default**. Keys and model selection come
+only from the backend's `OPENROUTER_API_KEY` and `OPENROUTER_MODEL`; there are no browser
+credential inputs. Configure these only in Terminal 1 (or source the private `.env`
+there), then restart the backend. Missing configuration or provider failures leave
+baseline findings visible and show the AI status. OpenRouter is not required for
+scanning, downloads, or rechecks.
+
+The Phase 3 disclosure below applies: only opaque IDs, rule IDs, status codes,
+classification/header-presence flags, cookie counts, and deterministic outcomes
+leave for OpenRouter. Target URLs, cookie names/values, raw headers, bodies and
+permissions are not model inputs. Evidence and advisory model prose are rendered
+as ordinary React text, never HTML. Local reports and downloaded specs retain the
+operator's target URL and configured cookie names, as in the CLI.
+
+### Verification
+
+```sh
+# Repository root:
+source .venv/bin/activate
+python -m pytest -q
+# Dashboard:
+cd dashboard
+npm run typecheck
+npm test
+npm run build
+```
+
+The automated browser smoke test needs the API and dashboard above running, the
+backend fixture origin set to `http://127.0.0.1:8765`, and port 8765 free (stop the
+manual fixture first). It owns a temporary fixture, downloads a spec, applies CSP,
+checks the resolved UI, stops the fixture, and checks the unverified UI:
+
+```sh
+cd dashboard  # if not already there
+npm run test:e2e
+```
+
+The test uses installed Google Chrome by default. Alternatively install Playwright's
+Chromium with `npx playwright install chromium` and set
+`PATCHPROOF_BROWSER_CHANNEL=chromium` for the command. Playwright is a **dashboard
+test dependency only**, not a scanning engine. Test screenshots are written to the
+ignored `dashboard/test-results/` directory. Python tests use controlled fixtures
+and a fake OpenRouter client; no public internet or API key is required. OpenRouter
+was not tested live for this phase.
 
 ## Copy-paste local demo
 
@@ -311,8 +478,8 @@ selection is unverified; no fallback address or retry is attempted. Cookie parsi
 is conservative and is not a browser cookie jar. It does not infer session cookie
 names, authenticate, assess HttpOnly/SameSite, or evaluate cookie scope and lifetime.
 
-Playwright, FastAPI, dashboard, history, more detectors, and hosted domain
-verification are deferred. Website content must remain
+Playwright scanning, SQLite, persistent history/recovery, more detectors, public
+hosting, and hosted domain verification are deferred. Website content must remain
 untrusted data. A model may request a registered tool; application policy must
 authorize each action and enforce scope and budgets before execution. A model or
 imported spec cannot grant network access or execute arbitrary commands.

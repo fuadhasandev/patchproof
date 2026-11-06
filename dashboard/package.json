@@ -1,0 +1,26 @@
+{
+  "name": "patchproof-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --hostname localhost --port 3000",
+    "build": "next build",
+    "start": "next start --hostname localhost --port 3000",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "node --test tests/*.test.mjs",
+    "test:e2e": "node tests/smoke.mjs"
+  },
+  "dependencies": {
+    "next": "16.4.5",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "server-only": "0.0.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5"
+  }
+}

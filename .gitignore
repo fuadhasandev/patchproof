@@ -14,3 +14,9 @@ csp-check.json
 .env
 .env.*
 !.env.example
+
+node_modules/
+.next/
+*.tsbuildinfo
+test-results/
+playwright-report/
