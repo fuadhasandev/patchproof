@@ -1,7 +1,7 @@
-# PatchProof — Phase 4
+# PatchProof — Phase 5
 
-PatchProof is an open-source website security agent under development. Phase 4 adds a local FastAPI backend and Next.js dashboard
-to the Python CLI: scan one exact URL, export a portable CheckSpec,
+PatchProof is an open-source website security agent under development. Phase 5 adds persistent local scan history to the FastAPI backend and Next.js
+dashboard. The Python CLI can scan one exact URL, export a portable CheckSpec,
 and replay it after a fix. Scan and replay need no API key. Optional investigation
 uses OpenRouter only when explicitly requested and configured. Test only websites you own or have
 permission to test.
@@ -17,7 +17,7 @@ python -m pip install -e '.[dev,api]'
 python -m pytest -q
 ```
 
-## Local dashboard (Phase 4)
+## Local dashboard (Phase 5)
 
 Use Python 3.11+ and Node.js 20.9+ (tested with Python 3.13 and Node 20.19).
 From the repository root, install both applications and generate a local server
@@ -63,7 +63,8 @@ Open **http://localhost:3000**. The API is **http://127.0.0.1:8000** and is
 not a browser login page: every API route requires the server credential.
 Both dev servers bind to loopback explicitly. Use exactly `localhost:3000` for
 the dashboard; browser-facing API routes reject other Host values. Run one API
-process (no `--workers` or reload process) because job history is process-local.
+process (no `--workers` or reload process). An exclusive database lock rejects
+a second API process using the same database; there is one execution worker.
 For a local production build, use `npm run build` then `npm start` in the dashboard
 directory with the same server-only credential exported.
 
@@ -103,7 +104,8 @@ disable the fixture exception.
 
 ### Local API contract and limits
 
-The dashboard uses five explicit same-origin proxy routes. The backend URL is fixed,
+The dashboard uses explicit same-origin proxy routes for scans, history, reports,
+downloads, timelines, and retries. The backend URL is fixed,
 not supplied by a request. The Next.js server adds the shared credential; it is not
 included in client JavaScript, browser storage, or API reports. Browser-facing
 state-changing routes require `Origin: http://localhost:3000` and
@@ -114,18 +116,22 @@ and credential. There is no wildcard CORS or general-purpose URL proxy.
 | --- | --- |
 | `GET /v1/capabilities` | Investigation availability, fixture configuration, local limits |
 | `POST /v1/scans` | JSON `{ "target_url": "https://example.com", "session_cookies": [], "ai": false }`; returns 202 with job ID immediately |
-| `GET /v1/jobs/{id}` | Poll `queued`, `running`, `completed`, or `failed`; completed jobs include reports and findings |
+| `GET /v1/jobs/{id}` | Poll `queued`, `running`, `completed`, `failed`, or `interrupted`; saved reports and findings remain available |
+| `GET /v1/scans?limit=20&before=ID` | Newest-first scan history with finding counts and a `next_cursor` |
+| `GET /v1/findings/{id}/rechecks?limit=20&before=ID` | Newest-first recheck timeline |
+| `POST /v1/jobs/{id}/retry` | JSON `{}`; explicitly retry a failed/interrupted job as a new job linked by `retry_of` |
 | `GET /v1/findings/{id}/spec` | Download the stored finding's versioned CheckSpec |
 | `POST /v1/findings/{id}/rechecks` | JSON `{}`; returns a new job linked by `original_finding_id` |
 
-Jobs use **two worker threads**, at most **eight queued/running jobs combined**, and
-at most **64 retained jobs**. Full capacity returns 429 without queuing more work.
-Completed/failed jobs and their findings expire **30 minutes after completion**;
-cleanup runs every 30 seconds and on access. Running jobs retain their slots until
-they finish. API restart clears all history, finding IDs, and recheck links; there
-is no recovery or persistence. A page refresh resets the dashboard's current view.
-Expired/unknown IDs return 404. A recheck job can outlive its original finding's
-retention window, but cannot authorize a different target.
+Jobs use **one execution worker** and at most **eight queued/running jobs combined**.
+Full execution capacity returns 429 without queuing more work. Finished history is
+stored in SQLite without automatic expiry. History and timelines use keyset
+pagination: 20 entries by default, at most 50 per page, newest first. Pass the
+returned `next_cursor` as `before`; adding scans does not shift older pages. Unknown
+IDs return 404, invalid pagination returns 422. Existing job/report/download shapes
+remain available; additional fields include target and timestamps, `retry_of`, and
+persistent-history capabilities. Legacy capability fields `history_ttl_seconds`
+and `store_limit` are 0 to mean no automatic expiry/retention cap.
 
 Input bodies are limited to **8 KiB**, URLs to 2,048 characters, and cookie-name
 lists to 16 entries. Unexpected fields (including `allow_local`, API keys, arbitrary
@@ -136,6 +142,79 @@ two follow-up attempts. Slow provider calls can occupy a worker; these are in-pr
 threads, not a cancellable process sandbox. Local credentials do not defend against
 other trusted programs running as your own OS user. Do not expose either server on
 public interfaces, tunnel it publicly, or use it as a hosted scanning service.
+
+### SQLite location, schema, and restarts
+
+The default database is **`.patchproof/history.sqlite3` relative to the backend's
+working directory**. Always start the backend from this repository root, or set an
+absolute `PATCHPROOF_DB_PATH` on the backend for a stable location. For example:
+
+```sh
+# Terminal 1, before starting the backend:
+export PATCHPROOF_DB_PATH="$PWD/.patchproof/history.sqlite3"
+python -m patchproof.storage init --database "$PATCHPROOF_DB_PATH"
+```
+
+The API automatically runs the same initialization if needed. The explicit command
+is idempotent and makes no target or model requests. Schema version 1 is recorded
+in SQLite `PRAGMA user_version`; version 0 (an empty/new database) migrates to 1 in
+a transaction. Unsupported newer versions are rejected rather than overwritten.
+There is no Phase 4 on-disk history to migrate: its former in-memory records cannot
+be recovered. Database files, WAL/SHM sidecars, and lock files are ignored by Git.
+New database files have mode 0600; new directories are created with mode 0700.
+
+Saved fields are job IDs/kinds/statuses and timestamps, original validated target
+URLs, configured cookie **names**, the AI opt-in boolean, sanitized baseline and
+final reports, findings, versioned CheckSpecs, and links to rechecks/retries.
+Validated AI explanations, safe evidence references, tool outcome summaries, and
+AI status may be saved as part of the report; **raw model messages/transcripts,
+API keys, request credentials, cookie values, raw response headers and bodies are
+never stored**. Target URLs include their path, as in CheckSpecs; do not supply
+secrets in URL paths. The database is local, not encrypted at rest, and not synced
+or uploaded by PatchProof.
+
+Results, findings, and terminal job states are written transactionally. For AI
+jobs the deterministic baseline and its findings are checkpointed **before the
+first provider call**. Original baselines, findings, and terminal reports are
+immutable; each recheck/retry is a separate record. A failed/interrupted recheck
+has no successful replay outcome and cannot mark a finding resolved.
+
+On API startup, previously `queued` or `running` jobs become **`interrupted`** in
+one transaction. Completed and failed jobs remain unchanged, and saved baselines
+survive. No requests or model calls are resumed. In Scan History, open an
+interrupted scan and choose **Retry original scan**, or **Retry this recheck** in
+its timeline. These actions reuse validated inputs, create new IDs, and reapply
+current server-side fixture permissions, target policy, and request budgets. A
+stored permission flag cannot authorize a retry: no such flag is saved.
+
+A normal graceful shutdown waits for accepted jobs to finish; a crash or forced
+shutdown leaves unfinished jobs for interruption recovery on the next startup.
+History is retained until you archive/remove the database yourself. Stop the API
+before backing up or moving the database, and preserve any WAL/SHM sidecars if
+copying after an abrupt stop. The empty `.lock` file is harmless after a crash;
+the operating system releases the lock. Do not run multiple API processes or use
+this as a distributed queue. The lock is supported on macOS/Linux.
+
+### Restart-aware browser test
+
+Stop any existing API, dashboard, and manual fixture on ports 8000, 3000, and 8765.
+From the dashboard directory:
+
+```sh
+npm run build
+npm run test:history
+```
+
+This self-contained Chrome test starts a production dashboard, API, and fixture
+with a temporary database and an ephemeral credential. It scans missing CSP,
+forcibly restarts the API with the same database, reopens the report from history,
+downloads its spec, adds CSP to the fixture, and verifies resolved while preserving
+the original finding. It then stops the fixture and verifies an unverified
+recheck alongside the earlier resolved entry. It shuts down all owned servers;
+screenshots are in ignored `dashboard/test-results/`. The temporary database/log
+path is printed for inspection. No real OpenRouter calls are made. The Python
+suite separately verifies interrupted-job recovery, pre-AI baseline persistence,
+secret exclusion, schema checks, transactions, pagination, and policy on retry.
 
 ### AI in the dashboard
 
@@ -324,8 +403,9 @@ calls and the same allowlisted records. Target data is explicitly marked untrust
 CheckSpecs, permissions, and raw exception messages are not sent to the model.**
 The API key is sent only as the Authorization header to the fixed OpenRouter API
 endpoint; it is never placed in messages or output. Local deterministic reports
-retain URLs and configured cookie names as before. Investigation creates no history
-files and does not export model prose as regression checks. Normal scan/replay
+retain URLs and configured cookie names as before. CLI investigation creates no history files and does not export model prose as
+regression checks. API investigation saves the sanitized report in local SQLite
+as described above; it does not save raw model transcripts. Normal scan/replay
 never read OpenRouter configuration or make model calls.
 
 The adapter follows OpenRouter's official
@@ -478,8 +558,8 @@ selection is unverified; no fallback address or retry is attempted. Cookie parsi
 is conservative and is not a browser cookie jar. It does not infer session cookie
 names, authenticate, assess HttpOnly/SameSite, or evaluate cookie scope and lifetime.
 
-Playwright scanning, SQLite, persistent history/recovery, more detectors, public
-hosting, and hosted domain verification are deferred. Website content must remain
+Playwright scanning, public hosting, multi-user accounts, hosted domain
+verification, distributed workers, and extra detectors are deferred. Website content must remain
 untrusted data. A model may request a registered tool; application policy must
 authorize each action and enforce scope and budgets before execution. A model or
 imported spec cannot grant network access or execute arbitrary commands.

@@ -20,3 +20,14 @@ node_modules/
 *.tsbuildinfo
 test-results/
 playwright-report/
+
+.patchproof/
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.sqlite-*
+*.sqlite3.lock
+*.sqlite.lock
+*.db
+*.db-*
+*.db.lock

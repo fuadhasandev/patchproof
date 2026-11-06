@@ -10,6 +10,11 @@ TOKEN = 'local-test-credential-' + 'x' * 32
 HEADERS = {'Authorization': 'Bearer ' + TOKEN, 'Origin': 'http://localhost:3000'}
 
 
+@pytest.fixture(autouse=True)
+def temporary_database(tmp_path, monkeypatch):
+    monkeypatch.setenv('PATCHPROOF_DB_PATH', str(tmp_path / 'history.sqlite3'))
+
+
 def client_for(fixture_origin=None, provider=None, **kwargs):
     app = api.create_app(api.Settings(token=TOKEN, fixture_origin=fixture_origin, **kwargs), provider=provider)
     return TestClient(app, base_url='http://127.0.0.1:8000', headers=HEADERS)
@@ -95,7 +100,7 @@ def test_validation_is_redacted_and_body_bounded():
         assert client.get('/v1/findings/unknown/spec').status_code == 404
 
 
-def test_job_runner_immediate_bounded_and_expiring(fixture_site, monkeypatch):
+def test_job_runner_immediate_bounded_and_persistent(fixture_site, monkeypatch):
     url, _ = fixture_site
     entered, release = threading.Event(), threading.Event()
     real_scan = service.scan
@@ -104,7 +109,7 @@ def test_job_runner_immediate_bounded_and_expiring(fixture_site, monkeypatch):
         release.wait(5)
         return real_scan(*args, **kwargs)
     monkeypatch.setattr(service, 'scan', pause)
-    with client_for(url, workers=1,pending_limit=1,store_limit=1,ttl=1) as client:
+    with client_for(url, workers=1,pending_limit=1) as client:
         try:
             response=client.post('/v1/scans',json={'target_url':url})
             assert response.status_code == 202
@@ -116,12 +121,8 @@ def test_job_runner_immediate_bounded_and_expiring(fixture_site, monkeypatch):
             release.set()
         job=wait(client,job_id)
         finding_id=job['findings'][0]['id']
-        assert client.post('/v1/scans',json={'target_url':url}).status_code==429
-        store=client.app.state.jobs
-        with store.lock:
-            store.jobs[job_id]['_finished'] -= 2
-        assert client.get('/v1/jobs/'+job_id).status_code==404
-        assert client.get('/v1/findings/'+finding_id+'/spec').status_code==404
+        assert client.get('/v1/jobs/'+job_id).status_code==200
+        assert client.get('/v1/findings/'+finding_id+'/spec').status_code==200
         assert client.post('/v1/scans',json={'target_url':url}).status_code==202
 
 

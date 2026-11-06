@@ -148,9 +148,11 @@ def parse_calls(message, registry, records, seen):
     return parsed
 
 
-def investigate(url: str, *, allow_local=False, session_cookies=(), provider=None) -> Investigation:
+def investigate(url: str, *, allow_local=False, session_cookies=(), provider=None, on_baseline=None) -> Investigation:
     # Validation and baseline collection precede even reading provider configuration.
     baseline = service.scan(url, allow_local=allow_local, session_cookies=session_cookies)
+    if on_baseline is not None:
+        on_baseline(baseline)
     target = CheckSpec(target_url=url).target_url
     registry, records = {}, {}
     events, followups = [], []

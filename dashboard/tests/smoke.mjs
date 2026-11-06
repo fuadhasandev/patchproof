@@ -22,7 +22,7 @@ try {
   await page.getByRole('button',{name:'Run security scan'}).click();
   await expect(page.getByRole('heading',{name:'Missing Content-Security-Policy header'})).toBeVisible({timeout:20000});
   const finding=page.locator('article.finding');
-  await expect(finding.getByText('still present',{exact:true})).toBeVisible();
+  await expect(finding.locator('.comparison').getByText('still present',{exact:true})).toBeVisible();
   const downloadPromise=page.waitForEvent('download');
   await finding.getByRole('link',{name:'Download CheckSpec'}).click();
   const download=await downloadPromise;
@@ -32,13 +32,13 @@ try {
   assert.ok(!JSON.stringify(spec).includes('E2E_SECRET'));
   fixed=true;
   await finding.getByRole('button',{name:'Recheck',exact:false}).click();
-  await expect(finding.getByText('resolved',{exact:true})).toBeVisible({timeout:20000});
-  await expect(finding.getByText('still present',{exact:true})).toBeVisible();
+  await expect(finding.locator('.comparison').getByText('resolved',{exact:true})).toBeVisible({timeout:20000});
+  await expect(finding.locator('.comparison').getByText('still present',{exact:true})).toBeVisible();
   await mkdir('test-results',{recursive:true});
   await page.screenshot({path:'test-results/resolved.png',fullPage:true});
   await new Promise(resolve=>fixture.close(resolve));
   await finding.getByRole('button',{name:'Recheck',exact:false}).click();
-  await expect(finding.getByText('unverified',{exact:true})).toBeVisible({timeout:20000});
+  await expect(finding.locator('.comparison').getByText('unverified',{exact:true})).toBeVisible({timeout:20000});
   await page.screenshot({path:'test-results/unverified.png',fullPage:true});
   assert.equal(requests,2); // baseline + successful replay; stopped fixture cannot receive a third request
   assert.ok(!(await page.locator('body').innerText()).includes('E2E_SECRET'));
