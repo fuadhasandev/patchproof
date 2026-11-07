@@ -31,3 +31,5 @@ playwright-report/
 *.db
 *.db-*
 *.db.lock
+.playwright/
+.demo-mixed-fixed

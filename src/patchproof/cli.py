@@ -22,12 +22,12 @@ def error(message, format):
 def scan(url: str, format: Format = typer.Option(Format.text),
          export_check: Path | None = typer.Option(None),
          export_checks: Path | None = typer.Option(None),
-         session_cookie: list[str] | None = typer.Option(None), allow_local: bool = False):
-    """Make one GET for all checks and optionally export finding specs."""
+         session_cookie: list[str] | None = typer.Option(None), allow_local: bool = False, browser: bool = False):
+    """Run HTTP checks and optionally an isolated browser check; export finding specs."""
     if export_check is not None and export_checks is not None:
         error('Choose --export-check or --export-checks, not both.', format)
     try:
-        result = service.scan(url, allow_local=allow_local, session_cookies=session_cookie or ())
+        result = service.scan(url, allow_local=allow_local, session_cookies=session_cookie or (), browser=browser)
         if export_check is not None or export_checks is not None:
             if not result.findings:
                 error('No findings to export; no CheckSpec was written.', format)
@@ -58,11 +58,11 @@ def replay(path: Path, format: Format = typer.Option(Format.text), allow_local: 
 
 @app.command()
 def investigate(url: str, format: Format = typer.Option(Format.text),
-                session_cookie: list[str] | None = typer.Option(None), allow_local: bool = False):
+                session_cookie: list[str] | None = typer.Option(None), allow_local: bool = False, browser: bool = False):
     """Scan first, then optionally investigate through bounded OpenRouter tools."""
     from .investigation import investigate as run, render_investigation, exit_code
     try:
-        result = run(url, allow_local=allow_local, session_cookies=session_cookie or ())
+        result = run(url, allow_local=allow_local, session_cookies=session_cookie or (), browser=browser)
     except ValueError:
         error('Invalid target or cookie name; OpenRouter was not called.', format)
     typer.echo(render_investigation(result, format.value))

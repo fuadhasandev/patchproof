@@ -3,7 +3,7 @@ from pathlib import Path
 from .collector import collect
 from .cookies import validate_cookie_name
 from .detectors import RULES, resolve_rule
-from .models import CheckSpec, ExtendedCheckSpec, Spec, Finding, Result, ScanResult
+from .models import CheckSpec, ExtendedCheckSpec, BrowserCheckSpec, Spec, Finding, Result, ScanResult
 
 
 class SpecError(ValueError):
@@ -13,7 +13,7 @@ class SpecError(ValueError):
 def validate_spec(payload) -> Spec:
     if not isinstance(payload, dict):
         raise ValueError
-    model = {'1': CheckSpec, '2': ExtendedCheckSpec}.get(payload.get('schema_version'))
+    model = {'1': CheckSpec, '2': ExtendedCheckSpec, '3': BrowserCheckSpec}.get(payload.get('schema_version'))
     if model is None or set(payload) != set(model.model_fields):
         raise ValueError
     spec = model.model_validate(payload)
@@ -44,13 +44,17 @@ def evaluate(spec, evidence, reason, *, replaying=False):
 
 def execute(spec: Spec, *, allow_local=False) -> Result:
     spec = validate_spec(spec.model_dump())
+    if isinstance(spec, BrowserCheckSpec):
+        from .browser import collect_browser
+        evidence, reason = collect_browser(spec.target_url, allow_local=allow_local)
+        return evaluate(spec, evidence, reason, replaying=True)
     parameters = getattr(spec, 'parameters', {})
     names = (parameters['cookie_name'],) if 'cookie_name' in parameters else ()
     evidence, reason = collect(spec.target_url, allow_local=allow_local, session_cookies=names)
     return evaluate(spec, evidence, reason, replaying=True)
 
 
-def scan(url: str, *, allow_local=False, session_cookies=()) -> ScanResult:
+def scan(url: str, *, allow_local=False, session_cookies=(), browser=False) -> ScanResult:
     names = tuple(dict.fromkeys(validate_cookie_name(n) for n in session_cookies))
     csp = CheckSpec(target_url=url)
     specs = [csp, ExtendedCheckSpec(target_url=csp.target_url, rule_id='http.hsts.present',
@@ -65,6 +69,10 @@ def scan(url: str, *, allow_local=False, session_cookies=()) -> ScanResult:
         # No configuration is an intentional skip, even if collection failed.
         run = rule.evaluate(evidence, reason)
         checks.append(Result(status='skipped', run=run))
+    if browser:
+        from .browser import collect_browser
+        browser_evidence, browser_reason = collect_browser(csp.target_url, allow_local=allow_local)
+        checks.append(evaluate(BrowserCheckSpec(target_url=csp.target_url), browser_evidence, browser_reason))
     findings = tuple(check.finding for check in checks if check.finding is not None)
     status = ('unverified' if any(c.status == 'unverified' for c in checks) else
               'still_present' if findings else 'resolved')

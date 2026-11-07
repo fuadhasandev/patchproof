@@ -1,11 +1,12 @@
-export type Evidence = {status_code: number|null; is_https: boolean|null; is_html: boolean|null; csp_present: boolean|null; hsts_present: boolean|null; cookies: {name:string;instances:number;missing_secure:number;unparseable:number}[]};
+export type BrowserEvidence = {profile:string;availability:string;navigation_ok:boolean;coverage_complete:boolean;insecure_references:number;policy_blocked:number;browser_blocked:number;https_upgrades:number;http_loads:number;requests:number;limit_reached:boolean};
+export type Evidence = {browser?:BrowserEvidence|null;status_code: number|null; is_https: boolean|null; is_html: boolean|null; csp_present: boolean|null; hsts_present: boolean|null; cookies: {name:string;instances:number;missing_secure:number;unparseable:number}[]};
 export type Run = {rule_id:string; applicability:string; cookie_name:string|null; reason:string|null; evidence:Evidence; coverage:string; remediation:string};
 export type Result = {status:string; run:Run};
 export type Latest = {id:string;state:string;report:{result:Result}|null;error:string|null};
 export type Finding = {id:string;title:string;category:string;suggested_fix:string;run:Run;latest_recheck:Latest|null};
 export type Investigation = {ai_status:string;ai_reason:string;model_turns:number;followup_requests:number;explanation:{claims:{outcome:string;explanation:string;evidence_ids:string[]}[];limitations:string[]}|null;tool_events:{tool:string;outcome:string}[]};
 export type Job = {id:string;kind:string;state:string;target_url:string;created_at:number;retry_of:string|null;error:string|null;findings:Finding[];report:{baseline?:{status:string;checks:Result[]};investigation?:Investigation|null;result?:Result}|null};
-export type Capabilities = {investigation:boolean;ai_configured:boolean;fixture_origin:string|null;history_ttl_seconds:number|null};
+export type Capabilities = {browser?:boolean;investigation:boolean;ai_configured:boolean;fixture_origin:string|null;history_ttl_seconds:number|null};
 export type HistoryItem = {id:string;target_url:string;created_at:number;state:string;finding_count:number;retry_of:string|null};
 export type HistoryPage = {items:HistoryItem[];next_cursor:string|null};
 export type TimelineEntry = Latest & {created_at:number;retry_of:string|null};

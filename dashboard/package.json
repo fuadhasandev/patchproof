@@ -9,6 +9,7 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "node --test tests/*.test.mjs",
     "test:e2e": "node tests/smoke.mjs",
+    "test:browser": "node tests/browser-smoke.mjs",
     "test:history": "node tests/history-smoke.mjs"
   },
   "dependencies": {

@@ -54,6 +54,7 @@ class ScanInput(Model):
     target_url: str = Field(max_length=2048)
     session_cookies: list[str] = Field(default_factory=list, max_length=16)
     ai: bool = False
+    browser: bool = False
 
     @field_validator('target_url')
     @classmethod
@@ -169,16 +170,16 @@ def create_app(settings: Settings | None = None, *, provider=None):
         return {'investigation': True, 'ai_configured': bool(os.environ.get('OPENROUTER_API_KEY') and os.environ.get('OPENROUTER_MODEL')),
                 'fixture_origin': settings.fixture_origin, 'history_ttl_seconds': 0,
                 'workers': settings.workers, 'pending_limit': settings.pending_limit, 'store_limit': 0,
-                'persistent_history': True, 'schema_version': 1}
+                'browser': True, 'browser_profile': 'chromium-static-v1', 'persistent_history': True, 'schema_version': 1}
 
     def start_scan(body, retry_of=None):
         def operation(checkpoint):
             options = dict(allow_local=settings.allow_local(body.target_url), session_cookies=body.session_cookies)
             if body.ai:
-                result = investigate(body.target_url, provider=provider, on_baseline=checkpoint, **options)
+                result = investigate(body.target_url, provider=provider, on_baseline=checkpoint, browser=body.browser, **options)
                 return {'baseline': result.baseline.model_dump(mode='json'),
                         'investigation': result.model_dump(mode='json')}, result.baseline
-            result = service.scan(body.target_url, **options)
+            result = service.scan(body.target_url, browser=body.browser, **options)
             return {'baseline': result.model_dump(mode='json'), 'investigation': None}, result
         return jobs.submit(operation, inputs=body.model_dump(), target=body.target_url, retry_of=retry_of)
 

@@ -10,6 +10,7 @@ function Badge({value}:{value:string}) { return <span className={'badge ' + valu
 function EvidenceView({evidence}:{evidence:Evidence}) {
   const fields = [['HTTP status', evidence.status_code ?? 'Unavailable'], ['HTML', evidence.is_html], ['HTTPS', evidence.is_https], ['CSP present', evidence.csp_present], ['HSTS present', evidence.hsts_present]];
   return <><dl className="evidence">{fields.map(([key,value])=><div key={String(key)}><dt>{key}</dt><dd>{value===null?'Unknown':String(value)}</dd></div>)}</dl>
+    {evidence.browser && <div className="browser-evidence"><p><strong>Browser profile:</strong> {evidence.browser.profile} · {evidence.browser.availability}</p><dl className="evidence">{Object.entries(evidence.browser).filter(([k])=>!['profile','availability'].includes(k)).map(([k,v])=><div key={k}><dt>{label(k)}</dt><dd>{String(v)}</dd></div>)}</dl></div>}
     {evidence.cookies.map(c=><p className="small" key={c.name}>Cookie <code>{c.name}</code>: {c.instances} issued · {c.missing_secure} without Secure · {c.unparseable} unparseable</p>)}</>;
 }
 function FindingCard({finding,onRecheck,latest,revision,onRetry}:{finding:Finding;onRecheck:()=>void;latest:Latest|null;revision:number;onRetry:(id:string)=>void}) {
@@ -30,7 +31,7 @@ function FindingCard({finding,onRecheck,latest,revision,onRetry}:{finding:Findin
 }
 export default function Home() {
   const [caps,setCaps] = useState<Capabilities|null>(null);
-  const [target,setTarget] = useState(''); const [cookies,setCookies] = useState(''); const [ai,setAi] = useState(false);
+  const [target,setTarget] = useState(''); const [cookies,setCookies] = useState(''); const [ai,setAi] = useState(false); const [browser,setBrowser]=useState(false);
   const [job,setJob] = useState<Job|null>(null); const [jobId,setJobId] = useState<string|null>(null);
   const [latest,setLatest] = useState<Record<string,Latest>>({});
   const [view,setView]=useState<'scan'|'history'>('scan');
@@ -50,7 +51,7 @@ export default function Home() {
   const busy=starting || !!(jobId && (!job || ['queued','running'].includes(job.state)));
   async function start(event:React.FormEvent) {
     event.preventDefault(); setError(''); setStarting(true);setJob(null);setJobId(null);setLatest({});
-    try {const next=await api<{id:string}>('scans',{target_url:target,session_cookies:cookies.split(/[\s,]+/).filter(Boolean),ai});setJobId(next.id);}
+    try {const next=await api<{id:string}>('scans',{target_url:target,session_cookies:cookies.split(/[\s,]+/).filter(Boolean),ai,browser});setJobId(next.id);}
     catch(e){setError((e as Error).message);}finally{setStarting(false);}
   }
   async function recheck(finding:Finding,retryId?:string) {
@@ -80,10 +81,11 @@ export default function Home() {
       {view==='history'?<History onOpen={openReport}/>:<div className="workspace"><aside><section className="panel scan-panel"><div className="section-title"><span className="step">01</span><h2>Start a scan</h2></div>
         <form onSubmit={start}><label htmlFor="target">Target URL</label><input id="target" type="url" required maxLength={2048} placeholder="https://your-website.com" value={target} onChange={e=>setTarget(e.target.value)}/><p className="hint">An exact page on a website you own or have permission to test.</p>
           <label htmlFor="cookies">Session cookie names <span className="optional">optional</span></label><input id="cookies" placeholder="sid, session" value={cookies} onChange={e=>setCookies(e.target.value)}/><p className="hint">Case-sensitive names, separated by commas or spaces. Values are never collected.</p>
+          {caps?.browser && <div className="ai-option"><label className="toggle"><input type="checkbox" checked={browser} onChange={e=>setBrowser(e.target.checked)}/><span>Browser check <small>Optional · Static HTTPS page</small></span></label><p className="hint">Requires isolated Chromium on the backend. JavaScript is disabled. Browser evidence stays local and is never sent to AI.</p></div>}
           {caps?.investigation && <div className="ai-option"><label className="toggle"><input type="checkbox" checked={ai} onChange={e=>setAi(e.target.checked)}/><span>AI investigation <small>Optional · OpenRouter</small></span></label><p className="hint">{caps.ai_configured?'Sends allowlisted observations, never target URLs, cookie names, values, or bodies.':'AI is not configured on the backend. Baseline checks still run.'}</p></div>}
           <button className="button primary" disabled={busy || !caps}>{busy?'Scanning…':'Run security scan →'}</button>
         </form></section>
-        <section className="scope"><h3>Small scope. Clear evidence.</h3><ul><li>CSP header presence</li><li>HSTS on HTTPS responses</li><li>Secure on named session cookies</li></ul><p>One request for the baseline. No crawling, redirects, or response-body inspection.</p>{caps?.fixture_origin && <p className="fixture">Fixture enabled: <code>{caps.fixture_origin}</code></p>}<p>History is saved locally in SQLite and survives API restarts. Interrupted requests are never resumed automatically.</p></section></aside>
+        <section className="scope"><h3>Small scope. Clear evidence.</h3><ul><li>CSP header presence</li><li>HSTS on HTTPS responses</li><li>Secure on named session cookies</li></ul><p>One request for the baseline. Optional browser check reads static resource references in memory. No crawling or redirects.</p>{caps?.fixture_origin && <p className="fixture">Fixture enabled: <code>{caps.fixture_origin}</code></p>}<p>History is saved locally in SQLite and survives API restarts. Interrupted requests are never resumed automatically.</p></section></aside>
         <div className="results"><div className="results-heading"><div className="section-title"><span className="step">02</span><h2>Scan results</h2></div>{job && <Badge value={job.state}/>}</div>
           {error && <div className="notice error" role="alert">{error}</div>}
           {busy && <section className="panel progress" role="status"><span className="spinner"/><div><h3>{job?.state==='running'?'Checking your target':'Waiting for a worker'}</h3><p>Collecting sanitized evidence{ai?' and running bounded investigation':''}. This view updates automatically.</p></div></section>}

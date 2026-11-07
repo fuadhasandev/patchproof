@@ -1,7 +1,6 @@
-# PatchProof — Phase 5
+# PatchProof — Phase 6
 
-PatchProof is an open-source website security agent under development. Phase 5 adds persistent local scan history to the FastAPI backend and Next.js
-dashboard. The Python CLI can scan one exact URL, export a portable CheckSpec,
+PatchProof is an open-source website security agent under development. Phase 6 adds an optional isolated Chromium check for HTTP resource references on HTTPS pages, preserving SQLite history in the FastAPI backend and Next.js dashboard. The Python CLI can scan one exact URL, export a portable CheckSpec,
 and replay it after a fix. Scan and replay need no API key. Optional investigation
 uses OpenRouter only when explicitly requested and configured. Test only websites you own or have
 permission to test.
@@ -17,7 +16,171 @@ python -m pip install -e '.[dev,api]'
 python -m pytest -q
 ```
 
-## Local dashboard (Phase 5)
+## Optional browser check (Phase 6)
+
+The regular HTTP scan remains a single metadata GET and needs neither Playwright,
+Chromium, nor an API key. Browser scanning is explicitly opt-in (`--browser` or the
+dashboard **Browser check** checkbox). Install the optional Python extra from the
+repository root, then install its matching Chromium:
+
+```sh
+source .venv/bin/activate
+python -m pip install -e '.[dev,api,browser]'
+python -m playwright install chromium
+patchproof scan https://example.com/ --browser --format json
+patchproof scan https://example.com/ --browser --export-checks ./browser-checks
+patchproof replay ./browser-checks/*-browser.mixed-content.references.json --format json
+```
+
+Use an authorized target. Export filenames are numbered in finding order: select
+the `*-browser.mixed-content.references.json` file actually produced. With exactly
+one finding, `--export-check ./mixed.json` also works. Existing CSP/HSTS/cookie
+CheckSpecs and commands are unchanged. Browser checks use schema **3**, rule
+`browser.mixed-content.references@1`, and the exact validated parameter
+`{"profile":"chromium-static-v1"}`. Specs contain no observed results or network
+permissions. Replay runs the same collector and detector without AI. Scan exits
+0 when checks complete (including findings/skips), 2 for invalid/unverified;
+replay exits 0 resolved, 1 still present, 2 unverified/invalid. `investigate` also
+accepts `--browser`, but its model receives **no browser evidence, IDs, or tools**.
+
+Controlled egress currently supports **macOS only**. Chromium runs under
+`/usr/bin/sandbox-exec` with Internet and outbound Unix socket networking denied;
+only inbound/bind Unix sockets needed for Chromium's private singleton are
+allowed. A TCP/UDP IPv4/IPv6 denial self-test must pass before launch. Chromium
+has no direct egress: an intercepted request is either aborted or fulfilled by a
+Python broker using the existing numeric, connection-time destination validation.
+Interception is an additional control, not the network security boundary. The
+sandbox is inherited by Chromium children. Other platforms, missing dependencies,
+failed isolation, or browser launch errors return **unavailable / unverified**
+while retaining the HTTP results. There is no interception-only fallback.
+
+The bundled Chromium installer can reject older macOS versions (including macOS
+13 on this development machine). An operator may select an installed, up-to-date
+Chrome/Chromium executable in the **backend/CLI terminal**; it receives the same
+network sandbox. For example:
+
+```sh
+export PATCHPROOF_CHROMIUM_EXECUTABLE="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+```
+
+The profile is deliberately narrow: one fresh context and page, JavaScript and
+service workers disabled, no downloads, popups, WebSockets, authenticated sessions,
+or crawling. It observes static document resource attributes (including srcset)
+and inline CSS, plus structured browser network outcomes. It does not execute
+application scripts, exercise interactions, or prove absence in arbitrary external
+CSS or dynamically generated content. Frames/embedded documents make coverage
+incomplete. The observation window is one second after load; a visit has a
+20-second hard process deadline, at most 32 requests considered for broker
+execution (later intercepts are aborted), one sequential broker connection, 2 MiB per response, 8 MiB total response bodies, and
+512 reference observations. One browser visit runs at a time per process. Failure,
+timeout, and caller cancellation terminate owned processes and remove their
+temporary profiles. Do not run several CLI processes to bypass local limits.
+
+Only GETs to the initial exact HTTPS origin (scheme, host, port) are fetched.
+Third-party origins, HTTP downgrades, query-bearing requests, redirects, nonpublic
+addresses, and subframe navigation are blocked. TLS verification stays enabled.
+The API's exact server-side loopback fixture exception applies only to its original
+origin; browser inputs and imported CheckSpecs cannot enable it. No request cookies,
+authorization, or arbitrary page-supplied headers are forwarded.
+
+Evidence consists only of the profile, availability/coverage flags, status code,
+and bounded counts: insecure references, policy-blocked requests, browser-blocked
+mixed-content requests, structured browser-reported HTTPS upgrades, HTTP loads,
+and attempted requests. An upgrade means Chromium reported the rewrite, **not**
+that the dependency loaded. HTTP loads are zero in this HTTPS-only broker profile.
+A zero browser-block count is not proof that Chromium allowed every request.
+References and network outcomes remain separate: observing an HTTP reference fails
+the rule even if Chromium upgrades it or PatchProof blocks it. Absence resolves
+only after successful navigation and complete supported-profile coverage. Failed
+navigation, unavailable isolation, blocked/failed dependencies, or exhausted limits
+make an absence **unverified**. HTTP targets are skipped (unverified on replay).
+
+No resource URLs, query strings, raw HTML/CSS, cookies, headers, screenshots, or raw
+browser logs are included in reports, CheckSpecs, or SQLite. The broker keeps
+rendering bytes and a small header allowlist transiently in the isolated visit;
+only sanitized counts leave that collector. Browser evidence always stays local,
+including when AI investigation is selected. Original findings and recheck history
+use the same immutable SQLite records as HTTP checks.
+
+### Trusted local HTTPS demo
+
+From the repository root, generate a short-lived test certificate with OpenSSL
+3 (`brew install openssl@3` if needed). These commands do not alter system trust:
+
+```sh
+mkdir -p .patchproof/fixture
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout .patchproof/fixture/key.pem -out .patchproof/fixture/cert.pem \
+  -days 2 -subj '/CN=127.0.0.1' \
+  -addext 'subjectAltName=IP:127.0.0.1,DNS:localhost'
+python examples/https_server.py \
+  --cert .patchproof/fixture/cert.pem --key .patchproof/fixture/key.pem
+```
+
+In the backend terminal, before the startup commands below, set:
+
+```sh
+export PATCHPROOF_FIXTURE_ORIGIN=https://127.0.0.1:8765
+export SSL_CERT_FILE="$PWD/.patchproof/fixture/cert.pem"
+export PATCHPROOF_BROWSER_CA_FILE="$PWD/.patchproof/fixture/cert.pem"
+# Optional installed-Chrome selection if needed:
+export PATCHPROOF_CHROMIUM_EXECUTABLE="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+```
+
+`SSL_CERT_FILE` supplies trust for baseline HTTP; `PATCHPROOF_BROWSER_CA_FILE`
+supplies the browser broker's PEM trust bundle. Both are operator configuration,
+never accepted in API requests or CheckSpecs. Regenerate the test certificate
+when it expires. Start the API and dashboard below, open **http://localhost:3000**,
+and scan `https://127.0.0.1:8765` with **Browser check** on. Inspect the HTTP reference
+finding, download its spec, then run `touch .demo-mixed-fixed` from the repository
+root. Recheck shows **resolved**, retaining the original finding and timeline.
+Stop the fixture and recheck again: **unverified**. Remove `.demo-mixed-fixed` to
+repeat the demo. The deliberately insecure third-party reference never reaches
+its destination. Do not run the HTTP fixture on the same port simultaneously.
+
+CLI equivalent (export the trust variables above in this terminal too):
+
+```sh
+patchproof scan https://127.0.0.1:8765 --allow-local --browser --export-check mixed.json
+# Apply the fixture fix, then replay the exported schema-3 spec:
+touch .demo-mixed-fixed
+patchproof replay mixed.json --allow-local --format json
+```
+
+### Browser verification
+
+Default tests need no browser installation and never use public websites:
+
+```sh
+python -m pytest -q
+cd dashboard
+npm run typecheck
+npm test
+npm run build
+```
+
+Enable the real Chromium tests from the repository root (using either installed
+Playwright Chromium or the executable override above):
+
+```sh
+PATCHPROOF_TEST_BROWSER=1 python -m pytest -q
+cd dashboard
+npm run test:browser
+```
+
+The smoke test owns temporary HTTPS/API/dashboard servers, a generated certificate,
+and SQLite database. Ports 8765, 8000 and localhost:3000 must be free. It checks
+scan → inspect → export → restart/history → fix → resolved → stopped fixture →
+unverified, including original finding preservation and redaction. It uses Chrome
+for the dashboard UI; the backend uses the configured isolated Chromium. If a
+separate IPv4 development server occupies port 3000, `PATCHPROOF_SMOKE_IPV6=1 npm
+run test:browser` uses IPv6 loopback for the test dashboard without stopping it.
+OpenRouter is faked in automated API tests, never called live. Test screenshots
+are generated only by the dashboard test harness in ignored `test-results`, never
+by the scanner. See the implementation references for [Playwright routing](https://playwright.dev/python/docs/network)
+and [structured Chromium mixed-content outcomes](https://chromedevtools.github.io/devtools-protocol/tot/Audits/).
+
+## Local dashboard (Phase 6)
 
 Use Python 3.11+ and Node.js 20.9+ (tested with Python 3.13 and Node 20.19).
 From the repository root, install both applications and generate a local server
@@ -43,7 +206,7 @@ set -a
 source .env.api
 set +a
 # Optional, only for the local fixture demo; omit for normal operation:
-export PATCHPROOF_FIXTURE_ORIGIN=http://127.0.0.1:8765
+# export PATCHPROOF_FIXTURE_ORIGIN=http://127.0.0.1:8765
 python -m uvicorn patchproof.api:create_app --factory \
   --host 127.0.0.1 --port 8000 --no-access-log
 ```
@@ -164,7 +327,7 @@ be recovered. Database files, WAL/SHM sidecars, and lock files are ignored by Gi
 New database files have mode 0600; new directories are created with mode 0700.
 
 Saved fields are job IDs/kinds/statuses and timestamps, original validated target
-URLs, configured cookie **names**, the AI opt-in boolean, sanitized baseline and
+URLs, configured cookie **names**, the AI/browser opt-in booleans, sanitized baseline and
 final reports, findings, versioned CheckSpecs, and links to rechecks/retries.
 Validated AI explanations, safe evidence references, tool outcome summaries, and
 AI status may be saved as part of the report; **raw model messages/transcripts,
@@ -257,8 +420,7 @@ npm run test:e2e
 
 The test uses installed Google Chrome by default. Alternatively install Playwright's
 Chromium with `npx playwright install chromium` and set
-`PATCHPROOF_BROWSER_CHANNEL=chromium` for the command. Playwright is a **dashboard
-test dependency only**, not a scanning engine. Test screenshots are written to the
+`PATCHPROOF_BROWSER_CHANNEL=chromium` for the command. The dashboard test dependency is separate from the optional Python browser extra. Test screenshots are written to the
 ignored `dashboard/test-results/` directory. Python tests use controlled fixtures
 and a fake OpenRouter client; no public internet or API key is required. OpenRouter
 was not tested live for this phase.
@@ -553,12 +715,12 @@ Dependency installation does need package-index access.
 
 This phase checks one response, two header-presence conditions, and explicitly
 named cookie Secure attributes; it does not inspect body markup,
-policy strength, browser behavior, or other vulnerabilities. Failed DNS/address
+policy strength or other vulnerabilities. The optional browser profile assesses only its documented static-reference coverage. Failed DNS/address
 selection is unverified; no fallback address or retry is attempted. Cookie parsing
 is conservative and is not a browser cookie jar. It does not infer session cookie
 names, authenticate, assess HttpOnly/SameSite, or evaluate cookie scope and lifetime.
 
-Playwright scanning, public hosting, multi-user accounts, hosted domain
+Interactive browser scanning, public hosting, multi-user accounts, hosted domain
 verification, distributed workers, and extra detectors are deferred. Website content must remain
 untrusted data. A model may request a registered tool; application policy must
 authorize each action and enforce scope and budgets before execution. A model or

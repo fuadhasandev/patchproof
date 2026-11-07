@@ -86,8 +86,35 @@ class SessionCookieRule(CSPRule):
         return True, None, 'evaluated'
 
 
+class MixedContentRule(CSPRule):
+    rule_id = 'browser.mixed-content.references'
+    expected_condition = 'no-http-resource-references'
+    title = 'HTTP resource reference on an HTTPS page'
+    coverage = ('Static document resource attributes and inline CSS during a bounded Chromium visit; '
+                'JavaScript disabled, no crawling or authenticated sessions. Network outcomes do not determine the rule condition.')
+    remediation = 'Replace HTTP resource references with HTTPS or remove them, then replay the same browser profile.'
+
+    def evaluate(self, evidence, reason=None, parameters=None):
+        browser = evidence.browser
+        if evidence.is_https is False:
+            applicability, observed, reason = 'skipped', None, 'Browser profile requires HTTPS.'
+        elif browser and browser.availability == 'available' and browser.insecure_references:
+            applicability, observed = 'evaluated', False
+        elif (browser and browser.availability == 'available' and evidence.is_https is True
+              and browser.navigation_ok and browser.coverage_complete and not browser.limit_reached
+              and not browser.policy_blocked and not browser.browser_blocked):
+            applicability, observed, reason = 'evaluated', True, None
+        else:
+            applicability, observed = 'unverified', None
+            reason = reason or 'Browser coverage is incomplete or unavailable.'
+        return CheckRun(rule_id=self.rule_id, applied=applicability == 'evaluated',
+                        applicability=applicability, observed_condition=observed,
+                        evidence=evidence, reason=reason, coverage=self.coverage,
+                        remediation=self.remediation)
+
+
 RULES = {(rule.rule_id, rule.detector_version): rule for rule in
-         (CSPRule(), HSTSRule(), SessionCookieRule())}
+         (CSPRule(), HSTSRule(), SessionCookieRule(), MixedContentRule())}
 
 
 def resolve_rule(spec: Spec):
