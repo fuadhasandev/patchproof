@@ -100,8 +100,8 @@ def https_site(tmp_path, monkeypatch):
     if os.environ.get('PATCHPROOF_TEST_BROWSER') != '1':
         pytest.skip('Set PATCHPROOF_TEST_BROWSER=1 for isolated Chromium integration')
     if sys.platform != 'darwin':
-        pytest.skip('Controlled browser egress currently supports macOS only')
-    pytest.importorskip('playwright')
+        pytest.fail('Requested browser integration requires macOS controlled egress')
+    import playwright  # Explicit opt-in must fail if the extra is missing.
     cert, key = tmp_path / 'cert.pem', tmp_path / 'key.pem'
     subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', str(key),
                     '-out', str(cert), '-days', '2', '-subj', '/CN=127.0.0.1', '-addext',

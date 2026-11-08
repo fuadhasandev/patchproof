@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
+from ._version import __version__
 from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
@@ -134,7 +135,7 @@ def create_app(settings: Settings | None = None, *, provider=None):
         yield
         await asyncio.to_thread(jobs.close)
 
-    app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.jobs = jobs
 
     @app.middleware('http')

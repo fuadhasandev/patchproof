@@ -1,0 +1,89 @@
+name: Release checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  python:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+        python: ['3.11', '3.13']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install '.[dev,api]' build twine
+      # Includes real loopback CLI export/replay, schemas 1/2, mocked AI,
+      # transactional migrations, restart persistence and redaction.
+      - run: python -m pytest -q
+      - run: python -m build
+      - run: python -m twine check dist/*
+      - run: python scripts/check_release.py
+  dashboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      PATCHPROOF_BROWSER_CHANNEL: chromium
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.4'
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: python -m venv .venv && .venv/bin/python -m pip install '.[api]'
+      - run: npm ci
+        working-directory: dashboard
+      - run: npm run typecheck && npm test && node tests/build-secrets.mjs
+        working-directory: dashboard
+      - run: npx playwright install --with-deps chromium
+        working-directory: dashboard
+      - run: npm run test:history
+        working-directory: dashboard
+  browser:
+    # The scanner's egress sandbox is macOS-only. Linux/Windows deliberately
+    # return unavailable; never replace this with an interception-only test.
+    runs-on: macos-14
+    timeout-minutes: 20
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      PATCHPROOF_TEST_BROWSER: '1'
+      PATCHPROOF_BROWSER_CHANNEL: chromium
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.4'
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: python -m venv .venv && .venv/bin/python -m pip install '.[dev,api,browser]'
+      - run: .venv/bin/python -m playwright install chromium
+      # The fixtures create and trust their own short-lived HTTPS certificate.
+      # Opt-in tests fail on missing dependencies, failed isolation or launch.
+      - run: .venv/bin/python -m pytest -q tests/test_browser.py
+      - run: npm ci && npx playwright install chromium && npm run build && npm run test:browser
+        working-directory: dashboard

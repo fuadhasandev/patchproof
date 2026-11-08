@@ -1,6 +1,6 @@
 # PatchProof local dashboard
 
-See the repository [README](../README.md#local-dashboard-phase-6) for installation,
+See the repository [README](../README.md#api-and-dashboard) for installation,
 server-only credentials, API startup, fixture configuration, and verification.
 
 - URL: http://localhost:3000

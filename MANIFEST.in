@@ -1,0 +1,20 @@
+include LICENSE README.md CONTRIBUTING.md SECURITY.md CHANGELOG.md
+recursive-include src/patchproof *.py
+recursive-include tests *.py
+recursive-include examples *.py
+recursive-include scripts *.py
+recursive-include docs *.md
+include dashboard/package.json dashboard/package-lock.json dashboard/tsconfig.json
+include dashboard/next.config.ts dashboard/next-env.d.ts dashboard/README.md dashboard/AGENTS.md
+recursive-include dashboard/app *.ts *.tsx *.css
+recursive-include dashboard/lib *.ts *.mjs
+recursive-include dashboard/tests *.mjs
+include dashboard/.env.example .env.example
+prune dashboard/node_modules
+prune dashboard/.next
+prune dashboard/test-results
+prune dashboard/playwright-report
+prune .venv
+prune .patchproof
+prune .playwright
+global-exclude __pycache__ *.py[cod] *.sqlite* *.db* *.pem *.log *.tsbuildinfo .DS_Store

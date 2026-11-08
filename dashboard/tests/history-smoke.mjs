@@ -4,7 +4,7 @@ import {createServer} from 'node:http';
 import {spawn} from 'node:child_process';
 import {randomBytes} from 'node:crypto';
 import {once} from 'node:events';
-import {mkdtemp, readFile, mkdir} from 'node:fs/promises';
+import {mkdtemp, readFile, mkdir, readdir} from 'node:fs/promises';
 import {createWriteStream} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
@@ -86,4 +86,10 @@ try{
  if(browser)await browser.close();
  if(fixture.listening)await new Promise(resolve=>fixture.close(resolve));
  await stop(dashboard);await stop(apiProcess);
+ for (const file of await readdir(work)) {
+  if (file.endsWith('.pem')) continue;
+  const bytes=await readFile(path.join(work,file));
+  assert.ok(!bytes.includes(Buffer.from(token)), 'Credential leaked to runtime file');
+  assert.ok(!bytes.includes(Buffer.from('HISTORY_SECRET')), 'Sensitive fixture evidence leaked');
+ }
 }
