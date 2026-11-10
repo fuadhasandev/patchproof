@@ -1,0 +1,13 @@
+# Local production-mode ingress. Requires Caddy and explicit trust of its local CA.
+# Set PATCHPROOF_PUBLIC_ORIGIN=https://patchproof.localhost:8443 and register that
+# exact /oauth2/callback URL with your externally configured OIDC client.
+https://patchproof.localhost:8443 {
+    tls internal
+    request_body {
+        max_size 8KB
+    }
+    reverse_proxy 127.0.0.1:4180 {
+        header_up -X-Forwarded-Access-Token
+        header_up -Authorization
+    }
+}

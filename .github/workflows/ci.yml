@@ -87,3 +87,47 @@ jobs:
       - run: .venv/bin/python -m pytest -q tests/test_browser.py
       - run: npm ci && npx playwright install chromium && npm run build && npm run test:browser
         working-directory: dashboard
+  hosted:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_USER: patchproof_test
+          POSTGRES_PASSWORD: fixture-only-password
+          POSTGRES_DB: patchproof_test_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U patchproof_test -d patchproof_test_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      PATCHPROOF_TEST_STANDALONE: '1'
+      PATCHPROOF_TEST_DATABASE_URL: postgresql+psycopg://patchproof_test:fixture-only-password@127.0.0.1:5432/patchproof_test_ci
+      PATCHPROOF_BROWSER_CHANNEL: chromium
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - name: PostgreSQL 17 backup tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-17
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+      - run: python -m venv .venv && .venv/bin/python -m pip install '.[dev,hosted]'
+      - run: .venv/bin/python -m pytest -q
+      - run: npm ci && npx playwright install --with-deps chromium && npm run typecheck && npm test && node tests/build-secrets.mjs && node tests/hosted-smoke.mjs
+        working-directory: dashboard
+      - run: docker compose --env-file .env.example config --quiet
+      - run: docker compose --env-file .env.example build api worker dashboard

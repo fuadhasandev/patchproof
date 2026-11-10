@@ -112,7 +112,7 @@ class MetadataTransport(httpx.BaseTransport):
         self.pool.close()
 
 
-def collect(target_url: str, *, allow_local=False, timeout=5.0, session_cookies=()):
+def _collect(target_url: str, *, allow_local=False, timeout=5.0, session_cookies=()):
     target_url = validate_url(target_url)
     session_cookies = tuple(dict.fromkeys(validate_cookie_name(n) for n in session_cookies))
     try:
@@ -126,3 +126,9 @@ def collect(target_url: str, *, allow_local=False, timeout=5.0, session_cookies=
         return Evidence(), 'Request timed out.'
     except (httpcore.NetworkError, httpcore.ProtocolError, httpx.HTTPError, OSError):
         return Evidence(), 'Request failed; no evaluable response metadata.'
+
+
+def collect(target_url: str, *, allow_local=False, timeout=5.0, session_cookies=()):
+    from .execution import target_request
+    with target_request(target_url):
+        return _collect(target_url, allow_local=allow_local, session_cookies=session_cookies, timeout=timeout)

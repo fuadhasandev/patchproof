@@ -1,0 +1,15 @@
+FROM python:3.13-slim-bookworm AS build
+WORKDIR /build
+COPY pyproject.toml README.md LICENSE ./
+COPY src ./src
+RUN pip wheel --no-cache-dir --wheel-dir /wheels '.[hosted]'
+
+FROM python:3.13-slim-bookworm
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+RUN groupadd --gid 10001 patchproof && useradd --uid 10001 --gid 10001 --no-create-home patchproof
+COPY --from=build /wheels /wheels
+RUN pip install --no-cache-dir --no-index --find-links=/wheels 'patchproof[hosted]' && rm -rf /wheels
+WORKDIR /app
+USER 10001:10001
+EXPOSE 8000
+CMD ["python", "-m", "uvicorn", "patchproof.hosted.api:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]

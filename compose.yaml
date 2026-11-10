@@ -1,0 +1,152 @@
+name: patchproof
+x-backend: &backend
+  build:
+    context: .
+    dockerfile: deployment/Dockerfile.backend
+  read_only: true
+  tmpfs: ['/tmp:size=64m,mode=1777']
+  cap_drop: [ALL]
+  security_opt: ['no-new-privileges:true']
+  pids_limit: 128
+  mem_limit: 512m
+  cpus: 1.0
+  init: true
+  restart: unless-stopped
+  environment: &settings
+    PATCHPROOF_DATABASE_URL: ${PATCHPROOF_DATABASE_URL:?Set database URL}
+    PATCHPROOF_OIDC_ISSUER: ${PATCHPROOF_OIDC_ISSUER:?Set issuer}
+    PATCHPROOF_OIDC_AUDIENCE: ${PATCHPROOF_OIDC_AUDIENCE:?Set API audience}
+    PATCHPROOF_OIDC_JWKS_URL: ${PATCHPROOF_OIDC_JWKS_URL:?Set JWKS URL}
+    PATCHPROOF_PUBLIC_ORIGIN: ${PATCHPROOF_PUBLIC_ORIGIN:?Set HTTPS public origin}
+    PATCHPROOF_HOSTED_DEV: ${PATCHPROOF_HOSTED_DEV:-0}
+    PATCHPROOF_CONCURRENCY: ${PATCHPROOF_CONCURRENCY:-2}
+    PATCHPROOF_LEASE_SECONDS: ${PATCHPROOF_LEASE_SECONDS:-60}
+    PATCHPROOF_HEARTBEAT_SECONDS: ${PATCHPROOF_HEARTBEAT_SECONDS:-10}
+    PATCHPROOF_MAX_ATTEMPTS: ${PATCHPROOF_MAX_ATTEMPTS:-3}
+    PATCHPROOF_TARGET_LIMIT: ${PATCHPROOF_TARGET_LIMIT:-5}
+    PATCHPROOF_MODEL_LIMIT: ${PATCHPROOF_MODEL_LIMIT:-3}
+    PATCHPROOF_MODEL_TIMEOUT: ${PATCHPROOF_MODEL_TIMEOUT:-20}
+    PATCHPROOF_MODEL_TOKENS: ${PATCHPROOF_MODEL_TOKENS:-2048}
+    PATCHPROOF_MODELS_PER_DAY: ${PATCHPROOF_MODELS_PER_DAY:-100}
+    PATCHPROOF_SUBMISSIONS_PER_MINUTE: ${PATCHPROOF_SUBMISSIONS_PER_MINUTE:-10}
+    PATCHPROOF_TARGETS_PER_MINUTE: ${PATCHPROOF_TARGETS_PER_MINUTE:-30}
+    PATCHPROOF_PENDING_LIMIT: ${PATCHPROOF_PENDING_LIMIT:-100}
+    PATCHPROOF_CHALLENGE_SECONDS: ${PATCHPROOF_CHALLENGE_SECONDS:-900}
+    PATCHPROOF_VERIFICATION_SECONDS: ${PATCHPROOF_VERIFICATION_SECONDS:-86400}
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_USER: patchproof_migrator
+      POSTGRES_DB: patchproof
+      PATCHPROOF_APP_DB_PASSWORD: ${PATCHPROOF_APP_DB_PASSWORD:?Set runtime database password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set database password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deployment/init-role.sh:/docker-entrypoint-initdb.d/10-runtime-role.sh:ro
+    networks: [data]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U patchproof_migrator -d patchproof']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    security_opt: ['no-new-privileges:true']
+    mem_limit: 1g
+    pids_limit: 128
+  migrate:
+    <<: *backend
+    command: [python, -m, patchproof.hosted.migrate]
+    environment:
+      PATCHPROOF_DATABASE_URL: ${PATCHPROOF_MIGRATION_DATABASE_URL:?Set migration-owner database URL}
+      PATCHPROOF_RUNTIME_ROLE: patchproof
+    profiles: [ops]
+    restart: 'no'
+    networks: [data]
+    depends_on:
+      postgres: {condition: service_healthy}
+  api:
+    <<: *backend
+    networks: [data, application, egress]
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+  worker:
+    <<: *backend
+    command: [python, -m, patchproof.hosted.worker]
+    environment:
+      <<: *settings
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-}
+    networks: [data, egress]
+    stop_grace_period: 180s
+    depends_on:
+      postgres: {condition: service_healthy}
+  dashboard:
+    build:
+      context: .
+      dockerfile: deployment/Dockerfile.dashboard
+    environment:
+      PATCHPROOF_MODE: hosted
+      PATCHPROOF_BACKEND_URL: http://api:8000
+      PATCHPROOF_PUBLIC_ORIGIN: ${PATCHPROOF_PUBLIC_ORIGIN:?Set public origin}
+    networks: [application]
+    read_only: true
+    tmpfs: ['/tmp:size=64m,mode=1777']
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    pids_limit: 128
+    mem_limit: 512m
+    init: true
+    restart: unless-stopped
+  login:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.0
+    command:
+      - --provider=keycloak-oidc
+      - --http-address=0.0.0.0:4180
+      - --upstream=http://dashboard:3000
+      - --reverse-proxy=true
+      - --pass-host-header=true
+      - --pass-access-token=true
+      - --code-challenge-method=S256
+      - --insecure-oidc-skip-nonce=false
+      - --cookie-csrf-per-request=true
+      - --cookie-csrf-per-request-limit=5
+      - --cookie-csrf-expire=10m
+      - --skip-auth-strip-headers=true
+      - --pass-basic-auth=false
+      - --pass-user-headers=false
+      - --cookie-secure=true
+      - --cookie-httponly=true
+      - --cookie-samesite=lax
+      - --cookie-name=__Host-patchproof
+      - --cookie-refresh=5m
+      - --cookie-expire=1h
+      - --email-domain=*
+      - --skip-provider-button=true
+      - --request-logging=false
+    environment:
+      OAUTH2_PROXY_OIDC_ISSUER_URL: ${PATCHPROOF_OIDC_ISSUER:?Set issuer}
+      OAUTH2_PROXY_CLIENT_ID: ${OIDC_CLIENT_ID:?Set dashboard client ID}
+      OAUTH2_PROXY_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?Set OIDC client secret}
+      OAUTH2_PROXY_COOKIE_SECRET: ${OIDC_COOKIE_SECRET:?Set cookie encryption secret}
+      OAUTH2_PROXY_REDIRECT_URL: ${PATCHPROOF_PUBLIC_ORIGIN}/oauth2/callback
+    ports: ['127.0.0.1:4180:4180']
+    networks: [application, egress]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    user: '65532:65532'
+    mem_limit: 128m
+    pids_limit: 64
+    restart: unless-stopped
+volumes:
+  postgres-data:
+networks:
+  data: {internal: true}
+  application: {internal: true}
+  egress: {}

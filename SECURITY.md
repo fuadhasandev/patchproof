@@ -4,8 +4,9 @@
 
 0.1.0 is the first release candidate. No published version is currently promised
 security maintenance. Once released, fixes will target the latest 0.1.x release;
-older builds should be upgraded. This is a local, single-user product, not a
-public or multi-user scanning service.
+older builds should be upgraded. Local v1 remains a single-user product. The new hosted v2 implementation is
+prepared for review and has not been approved for public deployment; its external
+OIDC/container/HTTPS verification gates remain open.
 
 ## Private reporting — release blocker
 
@@ -23,7 +24,9 @@ invented here.
 
 ## Boundaries
 
-Only scan authorized targets. Keep API and dashboard on loopback. Credentials,
+Only scan authorized targets. Keep the local v1 API and dashboard on loopback.
+Hosted v2 requires verified exact-host targets, OIDC and private API/dashboard
+networks behind the configured HTTPS/login ingress; see docs/production.md. Credentials,
 query strings, fragments and nonpublic destinations are rejected; the explicit
 local-fixture exception does not authorize LAN access. Browser egress isolation
 is macOS-only and fails closed. CheckSpecs and model output cannot grant access.

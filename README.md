@@ -12,6 +12,15 @@ resource references on HTTPS pages. Scan only websites you own or may test.
 [release verification](docs/releases/verification-0.1.0.md) for passed and unrun
 checks. No tag, package upload or release has been published by this preparation.
 
+## Hosted backend upgrade
+
+The repository now includes a separate PostgreSQL-backed `/v2` API, leased worker
+queue, OIDC-authenticated dashboard, exact-host DNS verification and a prepared
+Compose deployment. The local instructions below remain supported. Hosted startup,
+authentication, import, backup and deployment gates are in
+[the production runbook](docs/production.md); see [verification](docs/hosted-verification.md).
+This upgrade is prepared for review and is not yet approved for public deployment.
+
 ## Verified environment
 
 Local acceptance uses **macOS 13.7.7, CPython 3.11.18 and 3.13.7, Node.js

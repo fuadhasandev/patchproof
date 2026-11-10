@@ -18,7 +18,7 @@ wheel = root/'dist'/f'patchproof-{version}-py3-none-any.whl'
 sdist = root/'dist'/f'patchproof-{version}.tar.gz'
 with zipfile.ZipFile(wheel) as archive:
     names = archive.namelist()
-    required = {f'patchproof/{p.name}' for p in (root/'src/patchproof').glob('*.py')}
+    required = {'patchproof/' + p.relative_to(root/'src/patchproof').as_posix() for p in (root/'src/patchproof').rglob('*.py')}
     assert required <= set(names)
     assert any(n.endswith('/licenses/LICENSE') for n in names)
 with tarfile.open(sdist) as archive:
@@ -34,12 +34,12 @@ print('PASS archive contents and synchronized version', version, flush=True)
 env = {k: v for k, v in os.environ.items() if k != 'PYTHONPATH' and not k.startswith('OPENROUTER_')}
 with tempfile.TemporaryDirectory(prefix='patchproof-wheel-') as directory:
     work = Path(directory)
-    for extra in ('core', 'api', 'browser', 'dev'):
+    for extra in ('core', 'api', 'browser', 'dev', 'hosted'):
         home = work/extra
         venv.EnvBuilder(with_pip=True).create(home)
         python = home/'bin/python'
         requirement = str(wheel) + (f'[{extra}]' if extra != 'core' else '')
-        subprocess.run([str(python), '-m', 'pip', 'install', '--disable-pip-version-check', requirement], cwd=work, env=env, check=True, stdout=subprocess.DEVNULL)
+        subprocess.run([str(python), '-m', 'pip', 'install', '--only-binary=:all:', '--disable-pip-version-check', requirement], cwd=work, env=env, check=True, stdout=subprocess.DEVNULL)
         subprocess.run([str(python), '-m', 'pip', 'check'], cwd=work, env=env, check=True)
         subprocess.run([str(python), str(root/'scripts/installed_smoke.py'), extra], cwd=work, env=env, check=True)
 (root/'dist/SHA256SUMS').write_text(''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n' for p in (wheel, sdist)))

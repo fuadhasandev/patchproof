@@ -10,8 +10,8 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 extra = sys.argv[1] if len(sys.argv) > 1 else 'core'
-for module, required_extra in [('fastapi', 'api'), ('playwright', 'browser'), ('pytest', 'dev')]:
-    assert (importlib.util.find_spec(module) is not None) == (extra == required_extra)
+for module, extras in [('fastapi', ('api','hosted')), ('playwright', ('browser',)), ('pytest', ('dev',)), ('sqlalchemy', ('hosted',))]:
+    assert (importlib.util.find_spec(module) is not None) == (extra in extras)
 import patchproof
 assert Path(patchproof.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
 from patchproof import __version__
@@ -56,7 +56,7 @@ try:
         run(['replay', spec, '--format', 'json'], 2)
         server.shutdown(); server.server_close(); thread.join()
         assert json.loads(run(['replay', spec, '--allow-local', '--format', 'json'], 2))['status'] == 'unverified'
-        if extra == 'api':
+        if extra in ('api','hosted'):
             subprocess.run([sys.executable, '-m', 'patchproof.storage', 'init', '--database', str(Path(directory)/'history.sqlite3')], check=True)
             from patchproof.api import create_app, Settings
             from fastapi.testclient import TestClient
@@ -71,3 +71,10 @@ try:
 finally:
     server.shutdown(); server.server_close()
 print(f'PASS installed {extra}: CLI help, scan, evidence, export, replay 1/0/2, missing AI fallback')
+
+if extra == 'hosted':
+    from importlib.resources import files
+    from patchproof.hosted import api, worker, migrate
+    assert files('patchproof.hosted').joinpath('migrations/versions/0001_hosted.py').is_file()
+    assert files('patchproof.hosted').joinpath('migrations/schema_v1.py').is_file()
+    print('PASS hosted wheel: OIDC/database modules and packaged migration resources')

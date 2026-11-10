@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — hosted backend upgrade
+
+- PostgreSQL/SQLAlchemy/Alembic ownership model and transactional SQLite history import.
+- Separate leased worker, persistent dispatch budgets, fencing, cancellation and conservative model recovery.
+- OIDC-authenticated v2 API/dashboard, exact-host DNS verification, atomic quotas and idempotency.
+- Prepared non-root Docker/Compose deployment, health/metrics and operations runbook.
+- Local v1, CLI and CheckSpec replay remain supported. Hosted browser execution fails closed.
+- Public deployment remains gated on container, live OIDC, target-platform and security-reporting verification.
+
 ## 0.1.0 — first release candidate (unreleased)
 
 - Deterministic CSP/HSTS presence and explicitly named cookie Secure checks.

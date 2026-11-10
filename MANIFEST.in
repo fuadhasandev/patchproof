@@ -18,3 +18,5 @@ prune .venv
 prune .patchproof
 prune .playwright
 global-exclude __pycache__ *.py[cod] *.sqlite* *.db* *.pem *.log *.tsbuildinfo .DS_Store
+include compose.yaml .dockerignore
+recursive-include deployment Dockerfile.* *.sh Caddyfile.*
