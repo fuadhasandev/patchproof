@@ -111,6 +111,34 @@ Origin. The API is authenticated, not a browser login page. Use one API process,
 without reload or multiple workers. Do not expose or tunnel either server publicly.
 Unset `PATCHPROOF_FIXTURE_ORIGIN` and restart the API after the demo.
 
+## One-page website checker
+
+The homepage has one URL field and **Check website**, plus **Try sample report**
+for preloaded example data that makes no scan requests. Reports are titled
+**Website security configuration report** and group checks into **Needs attention**,
+**Passed**, and **Could not verify**, with plain-English explanations and next steps.
+There is no overall security rating.
+
+The simple flow checks CSP and HSTS header presence with the existing deterministic
+HTTP checks. Named-cookie checks appear as **Could not verify** because no names
+are configured; browser checks and AI are off. Exact scope and limitations are
+shown in the report. **Check again** repeats the same URL and inputs, including
+checks that previously passed, and compares each result with the previous report.
+An unavailable target never counts as a fix. Sample rechecks reload the same example.
+
+**Advanced** opens the existing dashboard at `/advanced` for projects, history,
+cookie names, browser checks, AI, exports, and finding-specific replays. Hosted
+live checks reuse an unexpired verified exact hostname or guide the user through
+the existing DNS TXT verification before submitting a scan. The server's domain
+verification and authorization checks remain unchanged.
+
+After building the dashboard, run `cd dashboard && npm run test:checker` for the
+sample and real local check → report → fix → check again → unavailable flow. It
+uses `examples/local_server.py` with an isolated marker directory and database,
+and tests hosted UI verification with mocked API responses. It needs free IPv4
+loopback ports 8765, 8000, and 3000 and installed Chrome. The production hosted
+API/identity/DNS integration remains covered by the separate hosted smoke suite.
+
 ## Local demo: scan → evidence → export → fix → replay
 
 In terminal 1, from the repository root, ensure `.demo-csp` is absent, then run:
@@ -142,7 +170,7 @@ unavailable target never proves a fix. Without `--allow-local`, even the saved
 loopback spec is unverified. Before repeating the demo remove only its generated
 `.demo-csp` and `.patchproof/csp-check.json`; exports refuse to overwrite files.
 
-In the dashboard, scan the same URL while the fixture is unfixed, inspect the
+In **Advanced**, scan the same URL while the fixture is unfixed, inspect the
 finding and download its CheckSpec. Restart the API with the same database and
 credential, open **Scan History → Open report**, apply `touch .demo-csp`, and
 click **Recheck**. The original remains still present while the new recheck is

@@ -49,7 +49,7 @@ try{
  browser=await chromium.launch({channel:process.env.PATCHPROOF_BROWSER_CHANNEL||'chrome',args:ipv6?['--host-resolver-rules=MAP localhost [::1]']:[]});
  const page=await browser.newPage({viewport:{width:1440,height:1100}});
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
- await page.goto('http://localhost:3000');
+ await page.goto('http://localhost:3000/advanced');
  await expect(page.getByText('API connected',{exact:true})).toBeVisible();
  await page.getByLabel('Target URL').fill('https://127.0.0.1:8765')
  await page.getByLabel('Browser check').check();

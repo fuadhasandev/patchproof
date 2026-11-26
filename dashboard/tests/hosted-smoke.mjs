@@ -39,7 +39,7 @@ try{
  await new Promise((resolve,reject)=>{gateway.once('error',reject);gateway.listen(3100,'localhost',resolve);});
  browser=await chromium.launch({channel:process.env.PATCHPROOF_BROWSER_CHANNEL||'chrome'});
  const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));
- await page.goto('http://localhost:3100');
+ await page.goto('http://localhost:3100/advanced');
  await expect(page.getByRole('link',{name:'Sign out'})).toBeVisible();
  await page.getByLabel('Project name',{exact:true}).fill('Production fixture');await page.getByRole('button',{name:'Create project',exact:true}).click();
  await page.getByLabel('Hostname',{exact:true}).fill('fixture.example');await page.getByRole('button',{name:'Create DNS challenge'}).click();

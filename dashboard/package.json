@@ -10,7 +10,8 @@
     "test": "node --test tests/*.test.mjs",
     "test:e2e": "node tests/smoke.mjs",
     "test:browser": "node tests/browser-smoke.mjs",
-    "test:history": "node tests/history-smoke.mjs"
+    "test:history": "node tests/history-smoke.mjs",
+    "test:checker": "node tests/checker-smoke.mjs"
   },
   "dependencies": {
     "next": "16.4.5",
