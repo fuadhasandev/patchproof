@@ -7,7 +7,7 @@ type Project={id:string;name:string};
 type Target={id:string;hostname:string;verified_until:number;revoked:boolean};
 type Challenge={id:string;record:string;value:string;expires_at:number};
 type Submission={target_url:string;session_cookies:string[];ai:boolean;browser:boolean;project_id?:string;target_id?:string};
-export default function WebsiteChecker({hosted}:{hosted:boolean}) {
+export default function WebsiteChecker({hosted,basic=false}:{hosted:boolean;basic?:boolean}) {
  const [url,setUrl]=useState('');const [job,setJob]=useState<Job|null>(null);const [previous,setPrevious]=useState<Job|null>(null);
  const [busy,setBusy]=useState(false);const [error,setError]=useState('');const [sample,setSample]=useState(false);
  const [submission,setSubmission]=useState<Submission|null>(null);const [challenge,setChallenge]=useState<Challenge|null>(null);
@@ -26,6 +26,11 @@ export default function WebsiteChecker({hosted}:{hosted:boolean}) {
  }
  async function run(input:Submission,baseline:Job|null){
   setProgress('Checking website…');
+  if(basic){
+   const response=await fetch('/api/basic-reports',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target_url:input.target_url})});
+   const data=await response.json();if(!response.ok)throw new Error(data.detail||'Request failed.');
+   setSubmission(input);setPrevious(baseline);setSample(false);setJob(data);return;
+  }
   const created=await request<{id:string}>('scans',input);
   setSubmission(input);setPrevious(baseline);setSample(false);setChallenge(null);setPending(null);setJob(null);
   const deadline=Date.now()+180000;
@@ -41,7 +46,7 @@ export default function WebsiteChecker({hosted}:{hosted:boolean}) {
   await perform(async()=>{
    const parsed=new URL(url);if(!['http:','https:'].includes(parsed.protocol))throw new Error('Enter an HTTP or HTTPS website URL.');
    const input:Submission={target_url:url,session_cookies:[],ai:false,browser:false};
-   if(hosted){
+   if(hosted&&!basic){
     setProgress('Checking domain verification…');
     const projects=await all<Project>('projects');
     // Reuse an existing verified exact hostname, including paginated projects/targets.
@@ -63,7 +68,7 @@ export default function WebsiteChecker({hosted}:{hosted:boolean}) {
  const groups=['Needs attention','Passed','Could not verify'];
  return <><header className="topbar"><a className="brand" href="/" aria-label="PatchProof home"><span className="brand-mark">P</span><strong>PatchProof</strong></a><a href="/advanced">Advanced</a></header>
  <main className="checker"><section className="checker-intro"><p className="eyebrow">Website configuration checks</p><h1>Check your website’s security configuration.</h1><p>See what needs attention, make a change, then check again.</p></section>
- <section className="panel"><form onSubmit={e=>{e.preventDefault();void start();}}><label htmlFor="website">Website URL</label><div className="url-row"><input id="website" type="url" required maxLength={2048} placeholder="https://your-website.com" value={url} disabled={busy} onChange={e=>setUrl(e.target.value)}/><button className="button" disabled={busy}>Check website</button></div></form><div className="checker-help"><p>Check a website you own or have permission to test.</p><button className="text-button" disabled={busy} onClick={showSample}>Try sample report</button></div>{hosted&&<p>Live checks require sign-in and verification of the exact domain. <a href="/oauth2/sign_in?rd=/">Sign in</a></p>}</section>
+ <section className="panel"><form onSubmit={e=>{e.preventDefault();void start();}}><label htmlFor="website">Website URL</label><div className="url-row"><input id="website" type="url" required maxLength={2048} placeholder="https://your-website.com" value={url} disabled={busy} onChange={e=>setUrl(e.target.value)}/><button className="button" disabled={busy}>Check website</button></div></form><div className="checker-help"><p>Check a website you own or have permission to test.</p><button className="text-button" disabled={busy} onClick={showSample}>Try sample report</button></div>{hosted&&!basic&&<p>Live checks require sign-in and verification of the exact domain. <a href="/oauth2/sign_in?rd=/">Sign in</a></p>}</section>
  <details className="panel check-scope"><summary>What gets checked?</summary><p>One bounded HTTP GET to the exact URL, with DNS resolution and normal TLS certificate verification. No redirects, crawling, sign-in, or response body analysis.</p>{checks.map(c=><p key={c.id}><strong>{c.title}.</strong> {c.scope}</p>)}<p>The optional static mixed-content browser check is not run here. Configure cookie names, browser checks, and AI in <a href="/advanced">Advanced</a>. These checks do not cover all vulnerabilities.</p></details>
  {busy&&<p className="notice" role="status">{progress||'Preparing check…'}</p>}
  {error&&<p className="notice error" role="alert">{error}</p>}
@@ -76,5 +81,5 @@ export default function WebsiteChecker({hosted}:{hosted:boolean}) {
  <div className="summary-strip">{groups.map(group=><div key={group}><strong>{checks.filter(c=>outcome(current.find(r=>r.run.rule_id===c.id))===group).length}</strong><span>{group}</span></div>)}</div>
  {groups.map(group=><section className="result-group" key={group}><h3>{group}</h3>{checks.filter(c=>outcome(current.find(r=>r.run.rule_id===c.id))===group).length===0&&<p className="muted">No checks in this category.</p>}{checks.filter(c=>outcome(current.find(r=>r.run.rule_id===c.id))===group).map(c=>{const result=current.find(r=>r.run.rule_id===c.id);return <article className="panel check-card" key={c.id}><div className="check-card-heading"><h4>{c.title}</h4><span className={'badge '+(group==='Passed'?'resolved':group==='Needs attention'?'still_present':'unverified')}>{group}</span></div><p>{group==='Passed'?c.pass:group==='Needs attention'?c.fail:(result?.run.reason||'The check did not return enough evidence to evaluate this condition.')}</p><p><strong>{group==='Passed'?'Suggested follow-up':'Suggested fix'}:</strong> {group==='Passed'?'Keep this header configured and review its settings; presence alone does not establish an effective policy.':group==='Could not verify'&&c.id!=='http.session-cookie.secure'?'Ensure the exact URL is reachable and returns a successful response. CSP needs an HTML page; HSTS needs HTTPS. Then check again.':c.fix}</p><details><summary>Exact check and evidence</summary><p>{c.scope}</p><code>{c.id}</code>{result&&<p>HTTP status: {result.run.evidence.status_code??'unavailable'} · {result.run.applicability==='evaluated'?'Evaluated':'Not evaluated'}{result.run.reason?' · '+result.run.reason:''}</p>}</details></article>;})}</section>)}
  </section>}
- <footer>PatchProof · Focused checks, explained plainly.<span>{hosted?'Domain verification required for live checks.':'Local checker'}</span></footer></main></>;
+ <footer>PatchProof · Focused checks, explained plainly.<span>{basic?'Basic report · no login required':hosted?'Domain verification required for live checks.':'Local checker'}</span></footer></main></>;
 }

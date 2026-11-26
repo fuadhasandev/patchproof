@@ -363,3 +363,6 @@ npm run build
   This is not an instruction to add another HTTP client to the runtime.
 
 Licensed under the standard [Apache-2.0 license](LICENSE).
+
+For the dedicated no-login homepage API on Render with the dashboard on Vercel,
+see [basic-report deployment and verification](docs/basic-reports.md).
