@@ -17,6 +17,46 @@ publicly. Separate deployment requirements are documented in the
 [basic-report guide](../docs/basic-reports.md) and
 [authenticated hosted runbook](../docs/production.md).
 
+## Public website metadata and launch configuration
+
+The public Vercel checker uses the Next.js Metadata API, a production-only
+sitemap, crawl rules for the private workbench and API, a web app manifest, and
+PatchProof-branded icon/social assets. Preview deployments return `noindex`
+metadata and an empty sitemap. Only `/` is included in the production sitemap.
+
+Configure these variables in the Vercel project (`dashboard/` as the root
+directory):
+
+- `NEXT_PUBLIC_SITE_URL`: the canonical production origin, for example
+  `https://patchproof-teal.vercel.app`. Change this to the connected custom
+  domain when one is configured. Set the same production URL in Production,
+  Preview, and Development so preview links still canonicalize to production.
+- `VERCEL_ENV` is supplied by Vercel and consumed at build time; no manual
+  setting is needed. Production builds are indexable; Preview builds are not.
+- `GOOGLE_SITE_VERIFICATION`: optional; add only the verification value issued
+  by Google Search Console. It is not required for the site to build or deploy.
+
+For the optional public live-check service, Vercel also needs
+`PATCHPROOF_BASIC_BACKEND_URL`, `PATCHPROOF_BASIC_TOKEN`, and
+`PATCHPROOF_PUBLIC_ORIGIN`. These are server-only settings; follow the
+[Vercel setup and secret requirements](../docs/basic-reports.md#vercel). They
+are not needed to serve the site, metadata, or sample report.
+
+To verify ownership in Google Search Console, add a **URL-prefix property**
+matching `NEXT_PUBLIC_SITE_URL`, choose **HTML tag** verification, and copy only
+the tag's `content` value into `GOOGLE_SITE_VERIFICATION`. In Vercel, open
+**Project Settings → Environment Variables**, add that variable for the
+Production environment, then redeploy the production deployment. Confirm the
+`google-site-verification` meta tag is present on the production homepage and
+select **Verify** in Search Console. Do not invent or commit a verification
+value.
+
+After deployment, check `/robots.txt`, `/sitemap.xml`, `/manifest.webmanifest`,
+the canonical link, and the Open Graph image at
+`/og/patchproof-social.png`. Keep production and preview domains configured
+with the actual production URL above; only Vercel's Production deployment is
+indexable.
+
 ## Frontend design and verification
 
 The checker, report, and Advanced workbenches share emerald theme tokens in

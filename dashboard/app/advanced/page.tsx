@@ -1,7 +1,15 @@
 import { Laptop, LockKeyhole, SlidersHorizontal, Search } from "lucide-react";
+import type { Metadata } from "next";
 import LocalDashboard from "../LocalDashboard";
 import HostedDashboard from "../HostedDashboard";
 export const dynamic = "force-dynamic";
+export const metadata: Metadata = {
+  title: "Advanced workbench",
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 const docs = "https://github.com/fuadhasandev/patchproof/blob/main";
 export default function AdvancedPage() {
   // The Vercel checker deployment cannot run the local or hosted workbench.
