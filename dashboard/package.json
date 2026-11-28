@@ -11,9 +11,12 @@
     "test:e2e": "node tests/smoke.mjs",
     "test:browser": "node tests/browser-smoke.mjs",
     "test:history": "node tests/history-smoke.mjs",
-    "test:checker": "node tests/checker-smoke.mjs"
+    "test:checker": "node tests/checker-smoke.mjs",
+    "test:design": "node tests/design-smoke.mjs && node tests/workbench-design.mjs"
   },
   "dependencies": {
+    "geist": "^1.9.2",
+    "lucide-react": "^1.83.0",
     "next": "16.4.5",
     "react": "19.3.1",
     "react-dom": "19.3.1",

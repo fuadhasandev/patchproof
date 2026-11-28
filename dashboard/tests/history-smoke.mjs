@@ -15,6 +15,7 @@ const token=randomBytes(32).toString('hex');
 const env={...process.env,PATCHPROOF_API_TOKEN:token,PATCHPROOF_DB_PATH:path.join(work,'history.sqlite3'),PATCHPROOF_FIXTURE_ORIGIN:'http://127.0.0.1:8765',NEXT_TELEMETRY_DISABLED:'1'};
 delete env.OPENROUTER_API_KEY;delete env.OPENROUTER_MODEL;
 let fixed=false, requests=0, apiProcess, dashboard, browser;
+const ipv6=process.env.PATCHPROOF_SMOKE_IPV6==='1';
 const fixture=createServer((req,res)=>{requests++;res.setHeader('Content-Type','text/html');res.setHeader('Set-Cookie','session=HISTORY_SECRET_VALUE');if(fixed)res.setHeader('Content-Security-Policy',"default-src 'self'");res.end('<p>HISTORY_SECRET_BODY</p>');});
 function start(command,args,name,cwd=root){
  const process=spawn(command,args,{cwd,env,stdio:['ignore','pipe','pipe']});
@@ -39,9 +40,9 @@ async function stop(process,signal='SIGTERM'){
 try{
  await new Promise((resolve,reject)=>{fixture.once('error',reject);fixture.listen(8765,'127.0.0.1',resolve);});
  await startApi();
- dashboard=start(process.execPath,['node_modules/next/dist/bin/next','start','--hostname','localhost','--port','3000'],'dashboard',path.join(root,'dashboard'));
- await ready('http://localhost:3000');
- browser=await chromium.launch({channel:process.env.PATCHPROOF_BROWSER_CHANNEL||'chrome'});
+ dashboard=start(process.execPath,['node_modules/next/dist/bin/next','start','--hostname',ipv6?'::1':'localhost','--port','3000'],'dashboard',path.join(root,'dashboard'));
+ await ready(ipv6?'http://[::1]:3000':'http://localhost:3000');
+ browser=await chromium.launch({channel:process.env.PATCHPROOF_BROWSER_CHANNEL||'chrome',args:ipv6?['--host-resolver-rules=MAP localhost [::1]']:[]});
  const page=await browser.newPage({viewport:{width:1440,height:1100}});
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto('http://localhost:3000/advanced');

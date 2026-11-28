@@ -13,15 +13,18 @@ const root=path.resolve('..'),work=await mkdtemp(path.join(tmpdir(),'patchproof-
 const env={...process.env,PATCHPROOF_MODE:'local',PATCHPROOF_API_TOKEN:randomBytes(32).toString('hex'),PATCHPROOF_DB_PATH:path.join(work,'history.sqlite3'),PATCHPROOF_FIXTURE_ORIGIN:'http://127.0.0.1:8765',NEXT_TELEMETRY_DISABLED:'1'};
 delete env.OPENROUTER_API_KEY;delete env.OPENROUTER_MODEL;
 const children=[];let browser,fixture;
+const ipv6=process.env.PATCHPROOF_SMOKE_IPV6==='1';
+const dashboardHost=ipv6?'::1':'127.0.0.1';
+const dashboardOrigin=ipv6?'http://[::1]:3000':'http://127.0.0.1:3000';
 function start(command,args,name,cwd=root){const child=spawn(command,args,{cwd,env,stdio:['ignore','pipe','pipe']});const log=createWriteStream(path.join(work,name+'.log'));child.stdout.pipe(log);child.stderr.pipe(log);children.push(child);return child;}
 async function ready(url,headers={}){for(let i=0;i<150;i++){try{if((await fetch(url,{headers,signal:AbortSignal.timeout(1000)})).ok)return;}catch{}await new Promise(r=>setTimeout(r,200));}throw Error('Server unavailable; logs: '+work);}
 async function stop(child){if(child&&child.exitCode===null&&child.signalCode===null){const ended=once(child,'exit');child.kill('SIGTERM');await ended;}}
 try{
- for(const port of [8765,8000,3000]){const probe=createServer();await new Promise((resolve,reject)=>{probe.once('error',reject);probe.listen(port,'127.0.0.1',resolve);});await new Promise(resolve=>probe.close(resolve));}
+ for(const port of [8765,8000,3000]){const probe=createServer();await new Promise((resolve,reject)=>{probe.once('error',reject);probe.listen(port,port===3000?dashboardHost:'127.0.0.1',resolve);});await new Promise(resolve=>probe.close(resolve));}
  fixture=start(path.join(root,'.venv/bin/python'),[path.join(root,'examples/local_server.py')],'fixture',work);await ready('http://127.0.0.1:8765');
  start(path.join(root,'.venv/bin/python'),['-m','uvicorn','patchproof.api:create_app','--factory','--host','127.0.0.1','--port','8000','--no-access-log'],'api');await ready('http://127.0.0.1:8000/v1/capabilities',{Authorization:'Bearer '+env.PATCHPROOF_API_TOKEN});
- const dashboard=start(process.execPath,['node_modules/next/dist/bin/next','start','--hostname','127.0.0.1','--port','3000'],'dashboard',path.join(root,'dashboard'));await ready('http://127.0.0.1:3000');
- browser=await chromium.launch({channel:process.env.PATCHPROOF_BROWSER_CHANNEL||'chrome',args:['--host-resolver-rules=MAP localhost 127.0.0.1']});
+ const dashboard=start(process.execPath,['node_modules/next/dist/bin/next','start','--hostname',dashboardHost,'--port','3000'],'dashboard',path.join(root,'dashboard'));await ready(dashboardOrigin);
+ browser=await chromium.launch({channel:process.env.PATCHPROOF_BROWSER_CHANNEL||'chrome',args:[ipv6?'--host-resolver-rules=MAP localhost [::1]':'--host-resolver-rules=MAP localhost 127.0.0.1']});
  const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[],submissions=[];
  page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(r.url().endsWith('/api/scans')&&r.method()==='POST')submissions.push(r.postDataJSON());});
  await page.goto('http://localhost:3000');
@@ -59,10 +62,10 @@ try{
  await page.getByRole('button',{name:'Scan History',exact:true}).click();
  await expect(page.getByRole('button',{name:'Open report'})).toHaveCount(3);
  await page.getByRole('button',{name:'Open report'}).first().click();
- await expect(page.getByText('http://127.0.0.1:8765',{exact:true})).toBeVisible();
+ await expect(page.locator('.report-meta').getByText('http://127.0.0.1:8765',{exact:true})).toBeVisible();
  // Hosted UI contract test: mocked API responses, no external DNS or website traffic.
  await stop(dashboard);env.PATCHPROOF_MODE='hosted';
- start(process.execPath,['node_modules/next/dist/bin/next','start','--hostname','127.0.0.1','--port','3000'],'hosted-dashboard',path.join(root,'dashboard'));await ready('http://127.0.0.1:3000');
+ start(process.execPath,['node_modules/next/dist/bin/next','start','--hostname',dashboardHost,'--port','3000'],'hosted-dashboard',path.join(root,'dashboard'));await ready(dashboardOrigin);
  const project='a'.repeat(32),target='b'.repeat(32);let verified=false,allowVerify=false,hostedScans=0;
  await page.route('**/api/hosted/**',async route=>{
   const req=route.request(),pathname=new URL(req.url()).pathname.replace('/api/hosted/','');

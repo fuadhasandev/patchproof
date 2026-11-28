@@ -12,7 +12,7 @@ const fixture=createServer((req,res)=>{
   res.end('<h1>E2E_SECRET_BODY</h1>');
 });
 await new Promise((resolve,reject)=>{fixture.once('error',reject);fixture.listen(8765,'127.0.0.1',resolve);});
-const browser=await chromium.launch({channel:process.env.PATCHPROOF_BROWSER_CHANNEL || 'chrome'});
+const browser=await chromium.launch({channel:process.env.PATCHPROOF_BROWSER_CHANNEL || 'chrome', args:process.env.PATCHPROOF_SMOKE_IPV6==='1'?['--host-resolver-rules=MAP localhost [::1]']:[]});
 const page=await browser.newPage({viewport:{width:1440,height:1100}});
 const errors=[];page.on('pageerror',e=>errors.push(e.message));
 try {
